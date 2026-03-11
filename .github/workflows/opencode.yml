@@ -48,11 +48,15 @@ jobs:
           script: |
             const fs    = require('fs');
             const model = process.env.OPENCODE_MODEL;
+            const lower = model.toLowerCase();
+            const npm   = lower.includes('claude') ? '@ai-sdk/anthropic'
+                        : lower.includes('gpt')    ? '@ai-sdk/openai'
+                        :                            '@ai-sdk/openai-compatible';
             const config = {
               "$schema": "https://opencode.ai/config.json",
               "provider": {
                 "custom": {
-                  "npm": "@ai-sdk/openai-compatible",
+                  "npm": npm,
                   "name": "Custom Provider",
                   "options": {
                     "baseURL": process.env.OPENCODE_BASE_URL,
@@ -65,7 +69,7 @@ jobs:
               }
             };
             fs.writeFileSync('opencode.json', JSON.stringify(config, null, 2));
-            console.log(`Provider configured: ${process.env.OPENCODE_BASE_URL}, model: ${model}`);
+            console.log(`npm: ${npm}, model: ${model}, baseURL: ${process.env.OPENCODE_BASE_URL}`);
 
       # 判断是「新建」还是「改进已有项目」
       - name: Setup project structure
