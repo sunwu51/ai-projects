@@ -14,7 +14,6 @@ MCP Center is an MCP (Model Context Protocol) server management tool that aggreg
 
 ```bash
 npm install
-npm run build
 ```
 
 ## Configuration
@@ -89,15 +88,15 @@ npm test
 ```
 mcp-center/
 ├── src/
-│   ├── index.ts      # Entry point
-│   ├── server.ts     # MCP server implementation
-│   ├── loader.ts     # MCP server loader
-│   ├── config.ts     # Configuration loading
-│   └── types.ts      # TypeScript types
+│   ├── index.js      # Entry point
+│   ├── server.js     # MCP server implementation
+│   ├── loader.js     # MCP server loader
+│   └── config.js     # Configuration loading
 ├── tests/
-│   ├── config.test.ts
-│   ├── types.test.ts
-│   └── loader.test.ts
+│   ├── config.test.js
+│   ├── loader.test.js
+│   ├── server.test.js
+│   └── http-integration.test.js
 ├── mcp.json          # Example configuration
 └── package.json
 ```

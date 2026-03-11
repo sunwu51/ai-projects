@@ -56,3 +56,34 @@ prj-20260311-mcp-center
 
 - [x] 标题中的目录名与仓库中的目录完全一致
 - [x] 已了解：提交后在评论输入 `/opencode` 触发改进
+---
+
+## Improvement Request — Issue #7
+> [https://github.com/sunwu51/ai-projects/issues/7](https://github.com/sunwu51/ai-projects/issues/7) by @sunwu51 on 2026-03-11
+
+### 目标项目目录名
+
+prj-20260311-mcp-center
+
+### 改进需求描述
+
+## 问题描述
+
+当前代码在http模式下，运行工具会报错，prj-20260311-mcp-center/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:217
+            throw new Error('Already connected to a transport. Call close() before connecting to a new transport, or use a separate Protocol instance per connection.');
+                  ^
+
+Error: Already connected to a transport. Call close() before connecting to a new transport, or use a separate Protocol instance per connection.
+    at Server.connect (file:///C:/Users/sunwu/Desktop/code/ai-projects/prj-20260311-mcp-center/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:217:19)
+    at Server.<anonymous> (file:///C:/Users/sunwu/Desktop/code/ai-projects/prj-20260311-mcp-center/src/server.js:183:23)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+
+另外当前项目已经改成js版本了，但是还有大量的ts文件，请清理干净，并更新readme。
+
+## 验收标准
+之前的测试是只有init和list，没有实际调用call，请补测call指定的tool拿到正确结果，注意测3次，来保证连接是正常的，没有前面链接关闭后，后面无法使用的问题。
+
+### 提交前确认
+
+- [x] 标题中的目录名与仓库中的目录完全一致
+- [x] 已了解：提交后在评论输入 `/opencode` 触发改进
