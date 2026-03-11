@@ -34,3 +34,25 @@ TypeScript / JavaScript
 
 - [x] 需求描述清晰，包含足够的细节让 AI 理解
 - [x] 已了解：提交后在评论输入 `/opencode` 触发实现
+---
+
+## Improvement Request — Issue #5
+> [https://github.com/sunwu51/ai-projects/issues/5](https://github.com/sunwu51/ai-projects/issues/5) by @sunwu51 on 2026-03-11
+
+### 目标项目目录名
+
+prj-20260311-mcp-center 
+
+### 改进需求描述
+
+## 问题描述
+现在项目有多个bug导致启动不起来，你不需要参考现有的代码了。根据requirement.md文件的需求重写整个项目吧，最好用JavaScript，而不要用Typescript。
+
+注意mcp.json文件，通过参数指定。
+
+你需要进行测试，分别对stdio和http server都进行测试，需要把测试流程和记录附到PR的说明中。
+
+### 提交前确认
+
+- [x] 标题中的目录名与仓库中的目录完全一致
+- [x] 已了解：提交后在评论输入 `/opencode` 触发改进
