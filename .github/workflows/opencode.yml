@@ -124,7 +124,7 @@ jobs:
         env:
           SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
         with:
-          model: siliconflow/Pro/MiniMaxAI/MiniMax-M2.5
+          model: siliconflow/Pro/zai-org/GLM-5
           prompt: |
             ${{ steps.setup.outputs.mode == 'improve' && '## Improvement Task' || '## New Project Task' }}
 
@@ -179,4 +179,4 @@ jobs:
         env:
           SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
         with:
-          model: siliconflow/Pro/MiniMaxAI/MiniMax-M2.5
+          model: siliconflow/Pro/zai-org/GLM-5
