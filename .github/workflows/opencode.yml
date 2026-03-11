@@ -86,7 +86,7 @@ jobs:
         env:
           SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
         with:
-          model: siliconflow/MiniMaxAI/MiniMax-M2.5
+          model: siliconflow/Pro/MiniMaxAI/MiniMax-M2.5
           prompt: |
             A new sub-project has been requested via Issue #${{ steps.setup.outputs.issue_number }}.
 

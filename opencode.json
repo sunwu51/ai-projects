@@ -9,7 +9,7 @@
         "apiKey": "{env:SILICONFLOW_API_KEY}"
       },
       "models": {
-        "MiniMaxAI/MiniMax-M2.5": {
+        "Pro/MiniMaxAI/MiniMax-M2.5": {
           "name": "MiniMax-M2.5"
         }
       }
