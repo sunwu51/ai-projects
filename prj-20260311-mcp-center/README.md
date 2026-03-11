@@ -1,12 +1,12 @@
 # MCP Center
 
-MCP Center is an MCP (Model Context Protocol) server management tool that aggregates multiple MCP servers into a single server.
+MCP Center is an MCP (Model Context Protocol) server management tool that aggregates multiple MCP servers into a single unified interface.
 
 ## Features
 
 - **Unified Interface**: Aggregates tools from multiple MCP servers into one
-- **Tool Naming**: Exposes tools with prefix format `mcpservername_toolname`
-- **Dual Transport**: Supports both stdio and HTTP (streamable) transports
+- **Tool Naming**: Exposes tools with prefix format `servername_toolname`
+- **Dual Transport**: Supports both stdio and HTTP (stateless streamable) transports
 - **Hot Reload**: Automatically reloads tools when configuration changes (no restart needed)
 - **Tool Filtering**: Enable specific tools per server via configuration
 
@@ -19,7 +19,7 @@ npm run build
 
 ## Configuration
 
-Create an `mcp.json` file in your project directory with the following structure:
+Create a config file with the following structure:
 
 ```json
 {
@@ -50,27 +50,29 @@ Create an `mcp.json` file in your project directory with the following structure
 
 ## Usage
 
-### Stdio Transport (Default)
+### Stdio Transport
 
 ```bash
-npm start
-# or explicitly
-npm run start:stdio
+npm run start:stdio -- --config /path/to/mcp.json
+# or
+node dist/index.js --config /path/to/mcp.json
 ```
 
 ### HTTP Transport
 
 ```bash
-npm run start:http
+npm run start:http -- --config /path/to/mcp.json
 # or with custom port
-PORT=8080 npm run start:http
+PORT=8080 npm run start:http -- --config /path/to/mcp.json
 ```
 
 The server will be available at `http://localhost:3000/mcp`.
 
+**Note**: The HTTP transport uses stateless mode (no session management), which is compatible with tools like ChatBox.
+
 ### Hot Reload
 
-The server watches the `mcp.json` file for changes. When you modify the configuration:
+The server watches the config file for changes. When you modify the configuration:
 
 - New servers are automatically loaded
 - Removed servers are disconnected
@@ -102,6 +104,15 @@ mcp-center/
 └── package.json
 ```
 
+## API Endpoints
+
+When running in HTTP mode:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /mcp | Handle MCP JSON-RPC requests |
+| GET | /mcp | SSE endpoint for server-to-client notifications |
+
 ## Example: Using with Exa MCP Server
 
 1. Create `mcp.json`:
@@ -121,7 +132,7 @@ mcp-center/
 2. Start the server:
 
 ```bash
-npm run start:stdio
+npm run start:stdio -- --config mcp.json
 ```
 
 3. The server will expose tools with prefix `exa_` (e.g., `exa_web_search_exa`).

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -19,6 +18,8 @@ import {
 import { loadConfig, watchConfig, getConfig, unwatchConfig } from './config.js';
 
 let currentTransport: 'stdio' | 'http' = 'stdio';
+let httpTransport: StreamableHTTPServerTransport | null = null;
+let httpServer: Server | null = null;
 
 export function createServer(): Server {
   const srv = new Server(
@@ -142,21 +143,16 @@ export async function runServer(transport: 'stdio' | 'http', configPath: string)
     const app = createMcpExpressApp();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
     
+    httpServer = createServer();
+    httpTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    
+    await httpServer.connect(httpTransport);
+    
     const handleMcpRequest = async (req: Request, res: Response) => {
-      const srv = createServer();
-      
       try {
-        const transportImpl = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-        });
-        
-        await srv.connect(transportImpl);
-        await transportImpl.handleRequest(req, res, req.body);
-        
-        res.on('close', () => {
-          transportImpl.close();
-          srv.close();
-        });
+        await httpTransport!.handleRequest(req, res, req.body);
       } catch (error) {
         console.error('[mcp-center] Error handling MCP request:', error);
         if (!res.headersSent) {
@@ -169,19 +165,19 @@ export async function runServer(transport: 'stdio' | 'http', configPath: string)
             id: null
           });
         }
-        srv.close();
       }
     };
     
     app.post('/mcp', handleMcpRequest);
     app.get('/mcp', handleMcpRequest);
     
-    app.listen(port, () => {
+    const httpApp = app.listen(port, () => {
       console.log(`[mcp-center] Server running on http://localhost:${port}/mcp`);
     });
     
     process.on('SIGINT', async () => {
       console.log('[mcp-center] Shutting down...');
+      httpApp.close();
       unwatchConfig();
       await closeAllServers();
       process.exit(0);
@@ -189,6 +185,7 @@ export async function runServer(transport: 'stdio' | 'http', configPath: string)
     
     process.on('SIGTERM', async () => {
       console.log('[mcp-center] Shutting down...');
+      httpApp.close();
       unwatchConfig();
       await closeAllServers();
       process.exit(0);
