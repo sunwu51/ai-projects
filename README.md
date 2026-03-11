@@ -34,7 +34,7 @@ OpenCode AI 实现功能 + 写测试
 
 | 密钥名称 | 说明 |
 |---------|------|
-| `ANTHROPIC_API_KEY` | 从 [console.anthropic.com](https://console.anthropic.com) 获取 |
+| `SILICONFLOW_API_KEY` | 从 [cloud.siliconflow.cn](https://cloud.siliconflow.cn) 获取 |
 
 ### 2. 创建新项目
 

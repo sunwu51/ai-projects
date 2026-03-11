@@ -84,9 +84,9 @@ jobs:
       - name: Run OpenCode to implement project
         uses: anomalyco/opencode/github@latest
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
         with:
-          model: anthropic/claude-sonnet-4-20250514
+          model: siliconflow-cn/Qwen/Qwen2.5-Coder-32B-Instruct
           prompt: |
             A new sub-project has been requested via Issue #${{ steps.setup.outputs.issue_number }}.
 
