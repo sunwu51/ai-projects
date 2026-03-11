@@ -1,0 +1,54 @@
+name: "改进已有项目 / Improve Existing Project"
+description: "对已合并项目提出改进需求"
+title: "[prj-YYYYMMDD-name] "
+labels:
+  - improvement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 使用说明
+
+        1. **修改标题**：将 `[prj-YYYYMMDD-name]` 替换为你要改进的项目目录名（必须完全匹配）
+        2. **描述改进需求**
+        3. 提交后在评论区输入 `/opencode` 触发 AI 修改并提 PR
+
+        ---
+
+  - type: input
+    id: project_dir
+    attributes:
+      label: 目标项目目录名
+      description: 必须与仓库中的目录名完全一致，例如 prj-20260311-my-api
+      placeholder: "prj-20260311-my-api"
+    validations:
+      required: true
+
+  - type: textarea
+    id: improvement
+    attributes:
+      label: 改进需求描述
+      description: 描述需要改进的内容
+      placeholder: |
+        ## 问题描述
+        当前代码存在 xxx 问题
+
+        ## 期望改进
+        - 改进点 1
+        - 改进点 2
+
+        ## 验收标准
+        - [ ] 功能正常
+        - [ ] 测试通过
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 标题中的目录名与仓库中的目录完全一致
+          required: true
+        - label: 已了解：提交后在评论输入 `/opencode` 触发改进
+          required: true

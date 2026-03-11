@@ -1,14 +1,23 @@
-name: OpenCode - 创建新项目
+name: OpenCode - 项目管理
 
 on:
   issue_comment:
     types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+# ─────────────────────────────────────────────
+# 公共权限判断：只允许 owner / member / collaborator
+# ─────────────────────────────────────────────
 
 jobs:
-  create-project:
-    # 只响应 Issue 评论（不含 PR），且评论包含 /opencode 或 /oc
-    # 并且只允许仓库 owner / member / collaborator 触发，防止外部用户滥用
+
+  # ══════════════════════════════════════════
+  # Job 1：新建 或 改进已有项目（Issue 评论触发）
+  # ══════════════════════════════════════════
+  create-or-improve-project:
     if: |
+      github.event_name == 'issue_comment' &&
       github.event.issue.pull_request == null &&
       (contains(github.event.comment.body, '/opencode') ||
        contains(github.event.comment.body, '/oc')) &&
@@ -17,7 +26,6 @@ jobs:
        github.event.comment.author_association == 'COLLABORATOR')
 
     runs-on: ubuntu-latest
-
     permissions:
       id-token: write
       contents: write
@@ -31,7 +39,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # 根据 Issue 标题生成带日期的项目目录名，并写入 REQUIREMENTS.md
+      # 判断是「新建」还是「改进已有项目」
+      # 如果 Issue 标题包含 [prj-YYYYMMDD-xxx] 则复用已有目录，否则新建
       - name: Setup project structure
         id: setup
         uses: actions/github-script@v8
@@ -40,85 +49,134 @@ jobs:
             const fs   = require('fs');
             const path = require('path');
 
-            const issue     = context.payload.issue;
-            const title     = issue.title;
-            const body      = issue.body || 'No description provided.';
-            const issueNum  = issue.number;
-            const issueUrl  = issue.html_url;
-            const author    = issue.user.login;
+            const issue    = context.payload.issue;
+            const title    = issue.title;
+            const body     = issue.body || 'No description provided.';
+            const issueNum = issue.number;
+            const issueUrl = issue.html_url;
+            const author   = issue.user.login;
 
-            // ---- 生成 slug（保留英文/数字，CJK 替换为 cn-） ----
-            const slug = title
-              .replace(/[\u4e00-\u9fff\u3040-\u30ff\uAC00-\uD7AF]+/g, 'cn')
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, '-')
-              .replace(/^-+|-+$/g, '')
-              .substring(0, 40) || 'project';
+            // ── 检测标题中是否引用了已有项目目录 ──
+            // 格式：标题以 [prj-YYYYMMDD-slug] 开头，例如：
+            //   [prj-20260311-my-api] 需要增加限流功能
+            const refMatch = title.match(/^\[?(prj-\d{8}-[a-z0-9-]+)\]?/i);
 
-            // ---- 生成日期字符串 yyyymmdd ----
-            const now     = new Date();
-            const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+            let projectName;
+            let mode;  // 'create' | 'improve'
 
-            const projectName = `prj-${dateStr}-${slug}`;
+            if (refMatch && fs.existsSync(refMatch[1])) {
+              // ── 改进模式：复用已有目录 ──
+              projectName = refMatch[1];
+              mode = 'improve';
+              console.log(`Improve mode: reusing existing directory ${projectName}`);
 
-            // ---- 创建目录并写入需求文档 ----
-            fs.mkdirSync(projectName, { recursive: true });
+              // 追加本次改进需求到 REQUIREMENTS.md
+              const appendContent = [
+                '',
+                `---`,
+                '',
+                `## Improvement Request — Issue #${issueNum}`,
+                `> [${issueUrl}](${issueUrl}) by @${author} on ${new Date().toISOString().slice(0, 10)}`,
+                '',
+                body,
+              ].join('\n');
+              fs.appendFileSync(path.join(projectName, 'REQUIREMENTS.md'), appendContent, 'utf8');
 
-            const requirements = [
-              `# ${title}`,
-              '',
-              `> **Issue**: [#${issueNum}](${issueUrl})`,
-              `> **Author**: @${author}`,
-              `> **Date**: ${now.toISOString().slice(0, 10)}`,
-              '',
-              '## Requirements',
-              '',
-              body,
-            ].join('\n');
+            } else {
+              // ── 新建模式 ──
+              const slug = title
+                .replace(/^\[.*?\]\s*/, '')  // 去掉开头的 [xxx] 前缀
+                .replace(/[\u4e00-\u9fff\u3040-\u30ff\uAC00-\uD7AF]+/g, 'cn')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .substring(0, 40) || 'project';
 
-            fs.writeFileSync(path.join(projectName, 'REQUIREMENTS.md'), requirements, 'utf8');
+              const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+              projectName = `prj-${dateStr}-${slug}`;
+              mode = 'create';
+              console.log(`Create mode: new directory ${projectName}`);
 
-            console.log(`Project directory created: ${projectName}`);
+              fs.mkdirSync(projectName, { recursive: true });
+
+              const requirements = [
+                `# ${title}`,
+                '',
+                `> **Issue**: [#${issueNum}](${issueUrl})`,
+                `> **Author**: @${author}`,
+                `> **Date**: ${new Date().toISOString().slice(0, 10)}`,
+                '',
+                '## Requirements',
+                '',
+                body,
+              ].join('\n');
+
+              fs.writeFileSync(path.join(projectName, 'REQUIREMENTS.md'), requirements, 'utf8');
+            }
 
             core.setOutput('project_name', projectName);
             core.setOutput('issue_number', String(issueNum));
             core.setOutput('issue_title',  title);
+            core.setOutput('mode', mode);
 
-      # 让 OpenCode 读取需求、实现功能、跑测试、提 PR
-      - name: Run OpenCode to implement project
+      - name: Run OpenCode
         uses: anomalyco/opencode/github@latest
         env:
           SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
         with:
           model: siliconflow/Pro/MiniMaxAI/MiniMax-M2.5
           prompt: |
-            A new sub-project has been requested via Issue #${{ steps.setup.outputs.issue_number }}.
+            ${{ steps.setup.outputs.mode == 'improve' && '## Improvement Task' || '## New Project Task' }}
 
-            ## What has been prepared
-            - Project directory: `${{ steps.setup.outputs.project_name }}/`
-            - Requirements file: `${{ steps.setup.outputs.project_name }}/REQUIREMENTS.md` (already written)
+            Working directory: `${{ steps.setup.outputs.project_name }}/`
+            Issue: #${{ steps.setup.outputs.issue_number }} — ${{ steps.setup.outputs.issue_title }}
 
-            ## Your tasks (complete all steps in order)
+            Read `${{ steps.setup.outputs.project_name }}/REQUIREMENTS.md` for full context.
 
-            1. **Read** `${{ steps.setup.outputs.project_name }}/REQUIREMENTS.md` carefully.
+            ${{ steps.setup.outputs.mode == 'improve' && 'The latest improvement request is appended at the bottom of REQUIREMENTS.md. Apply the requested changes to the existing code.' || 'Implement the complete project from scratch.' }}
 
-            2. **Implement** the complete project inside `${{ steps.setup.outputs.project_name }}/`:
-               - Choose the most appropriate language / framework based on the requirements.
-               - Follow best practices: proper project structure, error handling, logging.
-               - Add a `${{ steps.setup.outputs.project_name }}/README.md` with setup & usage instructions.
+            Steps to follow:
+            1. Read `${{ steps.setup.outputs.project_name }}/REQUIREMENTS.md`
+            2. ${{ steps.setup.outputs.mode == 'improve' && 'Identify the improvement request and make the necessary code changes inside `${{ steps.setup.outputs.project_name }}/`' || 'Implement the full project inside `${{ steps.setup.outputs.project_name }}/`' }}
+            3. Write or update tests — all tests must pass
+            4. Create a pull request:
+               - Title: `${{ steps.setup.outputs.mode == 'improve' && format('improve({0}): {1}', steps.setup.outputs.project_name, steps.setup.outputs.issue_title) || format('feat({0}): {1}', steps.setup.outputs.project_name, steps.setup.outputs.issue_title) }}`
+               - Body: closes #${{ steps.setup.outputs.issue_number }}
 
-            3. **Write tests**:
-               - Unit tests for all core logic.
-               - Integration / end-to-end tests where applicable.
-               - Place tests under `${{ steps.setup.outputs.project_name }}/tests/` or follow the
-                 convention of the chosen ecosystem (e.g. `__tests__/`, `*_test.go`).
+            Do NOT modify files outside `${{ steps.setup.outputs.project_name }}/`.
 
-            4. **Verify** all tests pass before proceeding.
+  # ══════════════════════════════════════════
+  # Job 2：修复 PR 中的代码问题
+  # 在 PR 的评论或代码行评论中写 /opencode 即可
+  # ══════════════════════════════════════════
+  fix-pr:
+    if: |
+      (github.event_name == 'pull_request_review_comment' ||
+       (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)) &&
+      (contains(github.event.comment.body, '/opencode') ||
+       contains(github.event.comment.body, '/oc')) &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
 
-            5. **Create a Pull Request** with:
-               - Title: `feat(${{ steps.setup.outputs.project_name }}): ${{ steps.setup.outputs.issue_title }}`
-               - Body: reference `closes #${{ steps.setup.outputs.issue_number }}`
-               - Include a summary of what was implemented and how to run the tests.
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
 
-            Focus on producing a complete, production-quality implementation.
-            Do NOT modify files outside of `${{ steps.setup.outputs.project_name }}/`.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # OpenCode 自动读取 PR 上下文并在当前分支提交修复
+      - name: Run OpenCode to fix PR
+        uses: anomalyco/opencode/github@latest
+        env:
+          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+        with:
+          model: siliconflow/Pro/MiniMaxAI/MiniMax-M2.5
