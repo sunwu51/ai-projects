@@ -115,11 +115,10 @@ async function runStdio(mcpServer) {
 
 /**
  * Run in HTTP Streamable mode
- * @param {Server} mcpServer
  * @param {number} port
  * @returns {Promise<void>}
  */
-async function runHttp(mcpServer, port) {
+async function runHttp(port) {
   // Store sessions: sessionId -> {transport, server}
   const sessions = new Map();
 
@@ -175,12 +174,13 @@ async function runHttp(mcpServer, port) {
         return;
       }
 
-      // New session - only initialize requests
+      // New session - create a fresh Server instance per connection
+      const sessionServer = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
       });
 
-      await mcpServer.connect(transport);
+      await sessionServer.connect(transport);
 
       transport.onclose = () => {
         if (transport.sessionId) {
@@ -192,7 +192,7 @@ async function runHttp(mcpServer, port) {
       await transport.handleRequest(req, res, body);
 
       if (transport.sessionId) {
-        sessions.set(transport.sessionId, { transport, server: mcpServer });
+        sessions.set(transport.sessionId, { transport, server: sessionServer });
         console.log(`[mcp-center] New session: ${transport.sessionId}`);
       }
       return;
@@ -261,6 +261,6 @@ export async function runServer(transport, configPath) {
     await runStdio(mcpServer);
   } else {
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-    await runHttp(mcpServer, port);
+    await runHttp(port);
   }
 }
