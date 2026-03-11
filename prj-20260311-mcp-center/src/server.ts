@@ -16,9 +16,8 @@ import {
   closeAllServers,
   getLoadedServers,
 } from './loader.js';
-import { loadConfig, watchConfig, getConfig, getDefaultConfigPath, unwatchConfig } from './config.js';
+import { loadConfig, watchConfig, getConfig, unwatchConfig } from './config.js';
 
-let server: Server | null = null;
 let currentTransport: 'stdio' | 'http' = 'stdio';
 
 export function createServer(): Server {
@@ -101,18 +100,21 @@ async function reloadAllServers(): Promise<void> {
   console.log('[mcp-center] Reload complete');
 }
 
-export async function runServer(transport: 'stdio' | 'http', configPath?: string): Promise<void> {
+export async function runServer(transport: 'stdio' | 'http', configPath: string): Promise<void> {
   currentTransport = transport;
   
-  const path = configPath || getDefaultConfigPath();
-  console.log(`[mcp-center] Loading config from: ${path}`);
+  if (!configPath) {
+    throw new Error('Config path is required. Use --config <path> or -c <path>');
+  }
   
-  const config = loadConfig(path);
+  console.log(`[mcp-center] Loading config from: ${configPath}`);
+  
+  const config = loadConfig(configPath);
   console.log(`[mcp-center] Loaded ${config.servers.length} server(s) from config`);
   
   await loadAllServers(config.servers);
   
-  server = createServer();
+  const server = createServer();
   
   watchConfig(reloadAllServers);
   
@@ -140,29 +142,20 @@ export async function runServer(transport: 'stdio' | 'http', configPath?: string
     const app = createMcpExpressApp();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
     
-    app.post('/mcp', async (req: Request, res: Response) => {
-      if (!server) {
-        res.status(500).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32603,
-            message: 'Server not initialized'
-          },
-          id: null
-        });
-        return;
-      }
+    const handleMcpRequest = async (req: Request, res: Response) => {
+      const srv = createServer();
       
       try {
         const transportImpl = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
         });
-        await server.connect(transportImpl);
+        
+        await srv.connect(transportImpl);
         await transportImpl.handleRequest(req, res, req.body);
         
         res.on('close', () => {
           transportImpl.close();
-          server?.close();
+          srv.close();
         });
       } catch (error) {
         console.error('[mcp-center] Error handling MCP request:', error);
@@ -176,8 +169,12 @@ export async function runServer(transport: 'stdio' | 'http', configPath?: string
             id: null
           });
         }
+        srv.close();
       }
-    });
+    };
+    
+    app.post('/mcp', handleMcpRequest);
+    app.get('/mcp', handleMcpRequest);
     
     app.listen(port, () => {
       console.log(`[mcp-center] Server running on http://localhost:${port}/mcp`);

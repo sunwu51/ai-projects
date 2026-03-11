@@ -32,7 +32,7 @@ async function main() {
   const { transport, configPath } = parseArgs();
   
   try {
-    await runServer(transport, configPath);
+    await runServer(transport, configPath || '');
   } catch (error) {
     console.error('[mcp-center] Fatal error:', error);
     process.exit(1);
