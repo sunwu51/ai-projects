@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -34,7 +34,7 @@ jobs:
       # 根据 Issue 标题生成带日期的项目目录名，并写入 REQUIREMENTS.md
       - name: Setup project structure
         id: setup
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs   = require('fs');
