@@ -1,0 +1,9 @@
+{
+  "servers": [
+    {
+      "name": "exa",
+      "url": "https://mcp.exa.ai/mcp",
+      "enabledTools": ["web_search_exa"]
+    }
+  ]
+}
