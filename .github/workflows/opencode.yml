@@ -6,10 +6,6 @@ on:
   pull_request_review_comment:
     types: [created]
 
-# ─────────────────────────────────────────────
-# 公共权限判断：只允许 owner / member / collaborator
-# ─────────────────────────────────────────────
-
 jobs:
 
   # ══════════════════════════════════════════
@@ -39,8 +35,39 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # 动态生成 opencode.json，从 GitHub Variables/Secrets 读取配置
+      # OPENCODE_BASE_URL: GitHub Variable，例如 https://api.siliconflow.cn/v1
+      # OPENCODE_MODEL:    GitHub Variable，例如 Pro/zai-org/GLM-5
+      # OPENCODE_API_KEY:  GitHub Secret
+      - name: Configure OpenCode provider
+        uses: actions/github-script@v8
+        env:
+          OPENCODE_BASE_URL: ${{ vars.OPENCODE_BASE_URL }}
+          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL }}
+        with:
+          script: |
+            const fs    = require('fs');
+            const model = process.env.OPENCODE_MODEL;
+            const config = {
+              "$schema": "https://opencode.ai/config.json",
+              "provider": {
+                "custom": {
+                  "npm": "@ai-sdk/openai-compatible",
+                  "name": "Custom Provider",
+                  "options": {
+                    "baseURL": process.env.OPENCODE_BASE_URL,
+                    "apiKey": "{env:OPENCODE_API_KEY}"
+                  },
+                  "models": {
+                    [model]: { "name": model }
+                  }
+                }
+              }
+            };
+            fs.writeFileSync('opencode.json', JSON.stringify(config, null, 2));
+            console.log(`Provider configured: ${process.env.OPENCODE_BASE_URL}, model: ${model}`);
+
       # 判断是「新建」还是「改进已有项目」
-      # 如果 Issue 标题包含 [prj-YYYYMMDD-xxx] 则复用已有目录，否则新建
       - name: Setup project structure
         id: setup
         uses: actions/github-script@v8
@@ -56,21 +83,16 @@ jobs:
             const issueUrl = issue.html_url;
             const author   = issue.user.login;
 
-            // ── 检测标题中是否引用了已有项目目录 ──
-            // 格式：标题以 [prj-YYYYMMDD-slug] 开头，例如：
-            //   [prj-20260311-my-api] 需要增加限流功能
             const refMatch = title.match(/^\[?(prj-\d{8}-[a-z0-9-]+)\]?/i);
 
             let projectName;
-            let mode;  // 'create' | 'improve'
+            let mode;
 
             if (refMatch && fs.existsSync(refMatch[1])) {
-              // ── 改进模式：复用已有目录 ──
               projectName = refMatch[1];
               mode = 'improve';
               console.log(`Improve mode: reusing existing directory ${projectName}`);
 
-              // 追加本次改进需求到 REQUIREMENTS.md
               const appendContent = [
                 '',
                 `---`,
@@ -83,9 +105,8 @@ jobs:
               fs.appendFileSync(path.join(projectName, 'REQUIREMENTS.md'), appendContent, 'utf8');
 
             } else {
-              // ── 新建模式 ──
               const slug = title
-                .replace(/^\[.*?\]\s*/, '')  // 去掉开头的 [xxx] 前缀
+                .replace(/^\[.*?\]\s*/, '')
                 .replace(/[\u4e00-\u9fff\u3040-\u30ff\uAC00-\uD7AF]+/g, 'cn')
                 .toLowerCase()
                 .replace(/[^a-z0-9]+/g, '-')
@@ -122,9 +143,9 @@ jobs:
       - name: Run OpenCode
         uses: anomalyco/opencode/github@latest
         env:
-          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: siliconflow/Pro/zai-org/GLM-5
+          model: custom/${{ vars.OPENCODE_MODEL }}
           prompt: |
             ${{ steps.setup.outputs.mode == 'improve' && '## Improvement Task' || '## New Project Task' }}
 
@@ -147,7 +168,6 @@ jobs:
 
   # ══════════════════════════════════════════
   # Job 2：修复 PR 中的代码问题
-  # 在 PR 的评论或代码行评论中写 /opencode 即可
   # ══════════════════════════════════════════
   fix-pr:
     if: |
@@ -173,10 +193,36 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # OpenCode 自动读取 PR 上下文并在当前分支提交修复
+      - name: Configure OpenCode provider
+        uses: actions/github-script@v8
+        env:
+          OPENCODE_BASE_URL: ${{ vars.OPENCODE_BASE_URL }}
+          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL }}
+        with:
+          script: |
+            const fs    = require('fs');
+            const model = process.env.OPENCODE_MODEL;
+            const config = {
+              "$schema": "https://opencode.ai/config.json",
+              "provider": {
+                "custom": {
+                  "npm": "@ai-sdk/openai-compatible",
+                  "name": "Custom Provider",
+                  "options": {
+                    "baseURL": process.env.OPENCODE_BASE_URL,
+                    "apiKey": "{env:OPENCODE_API_KEY}"
+                  },
+                  "models": {
+                    [model]: { "name": model }
+                  }
+                }
+              }
+            };
+            fs.writeFileSync('opencode.json', JSON.stringify(config, null, 2));
+
       - name: Run OpenCode to fix PR
         uses: anomalyco/opencode/github@latest
         env:
-          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: siliconflow/Pro/zai-org/GLM-5
+          model: custom/${{ vars.OPENCODE_MODEL }}
