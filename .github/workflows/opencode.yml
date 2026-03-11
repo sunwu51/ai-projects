@@ -1,0 +1,120 @@
+name: OpenCode - 创建新项目
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  create-project:
+    # 只响应 Issue 评论（不含 PR），且评论包含 /opencode 或 /oc
+    if: |
+      github.event.issue.pull_request == null &&
+      (contains(github.event.comment.body, '/opencode') ||
+       contains(github.event.comment.body, '/oc'))
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # 根据 Issue 标题生成带日期的项目目录名，并写入 REQUIREMENTS.md
+      - name: Setup project structure
+        id: setup
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            const issue     = context.payload.issue;
+            const title     = issue.title;
+            const body      = issue.body || 'No description provided.';
+            const issueNum  = issue.number;
+            const issueUrl  = issue.html_url;
+            const author    = issue.user.login;
+
+            // ---- 生成 slug（保留英文/数字，CJK 替换为 cn-） ----
+            const slug = title
+              .replace(/[\u4e00-\u9fff\u3040-\u30ff\uAC00-\uD7AF]+/g, 'cn')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+              .substring(0, 40) || 'project';
+
+            // ---- 生成日期字符串 yyyymmdd ----
+            const now     = new Date();
+            const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+
+            const projectName = `prj-${dateStr}-${slug}`;
+
+            // ---- 创建目录并写入需求文档 ----
+            fs.mkdirSync(projectName, { recursive: true });
+
+            const requirements = [
+              `# ${title}`,
+              '',
+              `> **Issue**: [#${issueNum}](${issueUrl})`,
+              `> **Author**: @${author}`,
+              `> **Date**: ${now.toISOString().slice(0, 10)}`,
+              '',
+              '## Requirements',
+              '',
+              body,
+            ].join('\n');
+
+            fs.writeFileSync(path.join(projectName, 'REQUIREMENTS.md'), requirements, 'utf8');
+
+            console.log(`Project directory created: ${projectName}`);
+
+            core.setOutput('project_name', projectName);
+            core.setOutput('issue_number', String(issueNum));
+            core.setOutput('issue_title',  title);
+
+      # 让 OpenCode 读取需求、实现功能、跑测试、提 PR
+      - name: Run OpenCode to implement project
+        uses: anomalyco/opencode/github@latest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          model: anthropic/claude-sonnet-4-20250514
+          prompt: |
+            A new sub-project has been requested via Issue #${{ steps.setup.outputs.issue_number }}.
+
+            ## What has been prepared
+            - Project directory: `${{ steps.setup.outputs.project_name }}/`
+            - Requirements file: `${{ steps.setup.outputs.project_name }}/REQUIREMENTS.md` (already written)
+
+            ## Your tasks (complete all steps in order)
+
+            1. **Read** `${{ steps.setup.outputs.project_name }}/REQUIREMENTS.md` carefully.
+
+            2. **Implement** the complete project inside `${{ steps.setup.outputs.project_name }}/`:
+               - Choose the most appropriate language / framework based on the requirements.
+               - Follow best practices: proper project structure, error handling, logging.
+               - Add a `${{ steps.setup.outputs.project_name }}/README.md` with setup & usage instructions.
+
+            3. **Write tests**:
+               - Unit tests for all core logic.
+               - Integration / end-to-end tests where applicable.
+               - Place tests under `${{ steps.setup.outputs.project_name }}/tests/` or follow the
+                 convention of the chosen ecosystem (e.g. `__tests__/`, `*_test.go`).
+
+            4. **Verify** all tests pass before proceeding.
+
+            5. **Create a Pull Request** with:
+               - Title: `feat(${{ steps.setup.outputs.project_name }}): ${{ steps.setup.outputs.issue_title }}`
+               - Body: reference `closes #${{ steps.setup.outputs.issue_number }}`
+               - Include a summary of what was implemented and how to run the tests.
+
+            Focus on producing a complete, production-quality implementation.
+            Do NOT modify files outside of `${{ steps.setup.outputs.project_name }}/`.

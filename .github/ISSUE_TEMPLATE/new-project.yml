@@ -1,0 +1,74 @@
+name: "新建项目 / New Project"
+description: "通过 AI 自动实现一个新的子项目"
+title: "[Project] "
+labels:
+  - new-project
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 使用说明
+
+        1. **标题**：简明描述项目（英文效果最佳，会被转换为目录名）
+        2. **填写需求**：越详细越好，AI 将完全依赖此描述来实现功能
+        3. **提交 Issue** 后，在评论区输入 `/opencode` 触发自动实现
+
+        ---
+
+  - type: input
+    id: summary
+    attributes:
+      label: 项目简介
+      description: 一句话描述这个项目是什么（英文，将影响目录名生成）
+      placeholder: "e.g. A CLI tool that converts CSV to JSON"
+    validations:
+      required: true
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: 详细需求
+      description: 详细描述功能需求、技术约束和验收标准
+      placeholder: |
+        ## 功能需求
+        - 需要实现功能 A
+        - 需要实现功能 B
+
+        ## 技术要求
+        - 语言 / 框架偏好（如不填则由 AI 选择最合适的）
+        - 性能要求
+        - 依赖约束
+
+        ## 验收标准
+        - [ ] 功能 A 正常运行
+        - [ ] 所有单元测试通过
+        - [ ] 有完整的 README 文档
+    validations:
+      required: true
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: 首选语言（可选）
+      description: 如无偏好，AI 会根据需求自动选择
+      options:
+        - "不限（AI 自动选择）"
+        - Python
+        - TypeScript / JavaScript
+        - Go
+        - Rust
+        - Java
+        - "C / C++"
+        - Shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 需求描述清晰，包含足够的细节让 AI 理解
+          required: true
+        - label: 已了解：提交后在评论输入 `/opencode` 触发实现
+          required: true
