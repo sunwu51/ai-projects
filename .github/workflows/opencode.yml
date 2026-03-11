@@ -84,9 +84,9 @@ jobs:
       - name: Run OpenCode to implement project
         uses: anomalyco/opencode/github@latest
         env:
-          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         with:
-          model: siliconflow-cn/Qwen/Qwen2.5-Coder-32B-Instruct
+          model: minimax/MiniMax-M2.5
           prompt: |
             A new sub-project has been requested via Issue #${{ steps.setup.outputs.issue_number }}.
 
