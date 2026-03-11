@@ -9,8 +9,8 @@
         "apiKey": "{env:SILICONFLOW_API_KEY}"
       },
       "models": {
-        "Pro/MiniMaxAI/MiniMax-M2.5": {
-          "name": "MiniMax-M2.5"
+        "Pro/zai-org/GLM-5": {
+          "name": "GLM-5"
         }
       }
     }
