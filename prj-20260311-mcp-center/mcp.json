@@ -4,6 +4,11 @@
       "name": "exa",
       "url": "https://mcp.exa.ai/mcp",
       "enabledTools": ["web_search_exa"]
+    },
+    {
+      "name": "test",
+      "command": "node",
+      "args": ["tests/test-mcp-server.js"]
     }
   ]
 }

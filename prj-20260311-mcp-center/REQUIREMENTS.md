@@ -87,3 +87,25 @@ Error: Already connected to a transport. Call close() before connecting to a new
 
 - [x] 标题中的目录名与仓库中的目录完全一致
 - [x] 已了解：提交后在评论输入 `/opencode` 触发改进
+---
+
+## Improvement Request — Issue #9
+> [https://github.com/sunwu51/ai-projects/issues/9](https://github.com/sunwu51/ai-projects/issues/9) by @sunwu51 on 2026-03-15
+
+### 目标项目目录名
+
+prj-20260311-mcp-center
+
+### 改进需求描述
+
+## 改进描述
+现在的mcp center负责代理了其他mcp server的tools，但是还缺少另外两个重要功能，resources & template和prompt，这两个也帮忙代理一下，同样的名称前缀改为mcpserver名字+下划线开头。
+
+## 验收标准
+帮我在测试中写一个有tools，resources和template，还有prompt的小工具，添加到mcp.json完成三部分功能的测试。
+
+
+### 提交前确认
+
+- [x] 标题中的目录名与仓库中的目录完全一致
+- [x] 已了解：提交后在评论输入 `/opencode` 触发改进

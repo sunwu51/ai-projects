@@ -6,12 +6,20 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import {
   loadAllServers,
   reloadServer,
   getAllTools,
+  getAllResources,
+  getAllPrompts,
   callTool,
+  readResource,
+  getPrompt,
   closeAllServers,
   getLoadedServers,
 } from './loader.js';
@@ -24,7 +32,7 @@ import { loadConfig, watchConfig, getConfig, getDefaultConfigPath, unwatchConfig
 export function createMcpServer() {
   const srv = new Server(
     { name: 'mcp-center', version: '1.0.0' },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {}, resources: {}, prompts: {} } }
   );
 
   srv.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -47,6 +55,53 @@ export function createMcpServer() {
       return {
         content: [{ type: 'text', text: `Error: ${error.message || String(error)}` }],
         isError: true,
+      };
+    }
+  });
+
+  srv.setRequestHandler(ListResourcesRequestSchema, async () => {
+    const resources = getAllResources();
+    return {
+      resources: resources.map(resource => ({
+        uri: resource.uri,
+        name: resource.name,
+        description: resource.description,
+        mimeType: resource.mimeType,
+      })),
+    };
+  });
+
+  srv.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    try {
+      const result = await readResource(uri);
+      return result;
+    } catch (error) {
+      return {
+        contents: [{ uri, mimeType: 'text/plain', text: `Error: ${error.message || String(error)}` }],
+      };
+    }
+  });
+
+  srv.setRequestHandler(ListPromptsRequestSchema, async () => {
+    const prompts = getAllPrompts();
+    return {
+      prompts: prompts.map(prompt => ({
+        name: prompt.name,
+        description: prompt.description,
+        arguments: prompt.arguments,
+      })),
+    };
+  });
+
+  srv.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    try {
+      const result = await getPrompt(name, args);
+      return result;
+    } catch (error) {
+      return {
+        messages: [{ role: 'user', content: { type: 'text', text: `Error: ${error.message || String(error)}` } }],
       };
     }
   });

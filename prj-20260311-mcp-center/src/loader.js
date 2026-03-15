@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-/** @type {Map<string, {name: string, client: Client, tools: Array}>} */
+/** @type {Map<string, {name: string, client: Client, tools: Array, resources: Array, prompts: Array}>} */
 const loadedServers = new Map();
 
 /**
@@ -25,6 +25,26 @@ function makeToolName(serverName, toolName) {
 }
 
 /**
+ * Create a resource URI with server prefix
+ * @param {string} serverName
+ * @param {string} uri
+ * @returns {string}
+ */
+function makeResourceUri(serverName, uri) {
+  return `${sanitizeServerName(serverName)}_${uri}`;
+}
+
+/**
+ * Create a prompt name with server prefix
+ * @param {string} serverName
+ * @param {string} promptName
+ * @returns {string}
+ */
+function makePromptName(serverName, promptName) {
+  return `${sanitizeServerName(serverName)}_${promptName}`;
+}
+
+/**
  * Filter tools by enabledTools list
  * @param {Array} tools
  * @param {string[]|undefined} enabledTools
@@ -35,6 +55,32 @@ function filterTools(tools, enabledTools) {
     return tools;
   }
   return tools.filter(tool => enabledTools.includes(tool.name));
+}
+
+/**
+ * Filter resources by enabledResources list
+ * @param {Array} resources
+ * @param {string[]|undefined} enabledResources
+ * @returns {Array}
+ */
+function filterResources(resources, enabledResources) {
+  if (!enabledResources || enabledResources.length === 0) {
+    return resources;
+  }
+  return resources.filter(resource => enabledResources.includes(resource.uri));
+}
+
+/**
+ * Filter prompts by enabledPrompts list
+ * @param {Array} prompts
+ * @param {string[]|undefined} enabledPrompts
+ * @returns {Array}
+ */
+function filterPrompts(prompts, enabledPrompts) {
+  if (!enabledPrompts || enabledPrompts.length === 0) {
+    return prompts;
+  }
+  return prompts.filter(prompt => enabledPrompts.includes(prompt.name));
 }
 
 /**
@@ -56,6 +102,7 @@ async function loadHttpServer(config) {
 
   await client.connect(transport);
 
+  // Load tools
   const toolsResponse = await client.listTools();
   const rawTools = toolsResponse.tools || [];
   const filteredRaw = filterTools(rawTools, config.enabledTools);
@@ -68,7 +115,44 @@ async function loadHttpServer(config) {
     inputSchema: tool.inputSchema || {},
   }));
 
-  return { name: config.name, client, tools };
+  // Load resources
+  let resources = [];
+  try {
+    const resourcesResponse = await client.listResources();
+    const rawResources = resourcesResponse.resources || [];
+    const filteredResources = filterResources(rawResources, config.enabledResources);
+
+    resources = filteredResources.map(resource => ({
+      uri: makeResourceUri(config.name, resource.uri),
+      originalUri: resource.uri,
+      serverName: config.name,
+      name: resource.name || '',
+      description: resource.description || '',
+      mimeType: resource.mimeType,
+    }));
+  } catch (error) {
+    console.warn(`[mcp-center] Server ${config.name} does not support resources:`, error.message);
+  }
+
+  // Load prompts
+  let prompts = [];
+  try {
+    const promptsResponse = await client.listPrompts();
+    const rawPrompts = promptsResponse.prompts || [];
+    const filteredPrompts = filterPrompts(rawPrompts, config.enabledPrompts);
+
+    prompts = filteredPrompts.map(prompt => ({
+      name: makePromptName(config.name, prompt.name),
+      originalName: prompt.name,
+      serverName: config.name,
+      description: prompt.description || '',
+      arguments: prompt.arguments || [],
+    }));
+  } catch (error) {
+    console.warn(`[mcp-center] Server ${config.name} does not support prompts:`, error.message);
+  }
+
+  return { name: config.name, client, tools, resources, prompts };
 }
 
 /**
@@ -94,6 +178,7 @@ async function loadStdioServer(config) {
 
   await client.connect(transport);
 
+  // Load tools
   const toolsResponse = await client.listTools();
   const rawTools = toolsResponse.tools || [];
   const filteredRaw = filterTools(rawTools, config.enabledTools);
@@ -106,7 +191,44 @@ async function loadStdioServer(config) {
     inputSchema: tool.inputSchema || {},
   }));
 
-  return { name: config.name, client, tools };
+  // Load resources
+  let resources = [];
+  try {
+    const resourcesResponse = await client.listResources();
+    const rawResources = resourcesResponse.resources || [];
+    const filteredResources = filterResources(rawResources, config.enabledResources);
+
+    resources = filteredResources.map(resource => ({
+      uri: makeResourceUri(config.name, resource.uri),
+      originalUri: resource.uri,
+      serverName: config.name,
+      name: resource.name || '',
+      description: resource.description || '',
+      mimeType: resource.mimeType,
+    }));
+  } catch (error) {
+    console.warn(`[mcp-center] Server ${config.name} does not support resources:`, error.message);
+  }
+
+  // Load prompts
+  let prompts = [];
+  try {
+    const promptsResponse = await client.listPrompts();
+    const rawPrompts = promptsResponse.prompts || [];
+    const filteredPrompts = filterPrompts(rawPrompts, config.enabledPrompts);
+
+    prompts = filteredPrompts.map(prompt => ({
+      name: makePromptName(config.name, prompt.name),
+      originalName: prompt.name,
+      serverName: config.name,
+      description: prompt.description || '',
+      arguments: prompt.arguments || [],
+    }));
+  } catch (error) {
+    console.warn(`[mcp-center] Server ${config.name} does not support prompts:`, error.message);
+  }
+
+  return { name: config.name, client, tools, resources, prompts };
 }
 
 /**
@@ -125,7 +247,7 @@ export async function loadServer(config) {
     loadedServer = await loadStdioServer(config);
   }
 
-  console.log(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s) from "${config.name}"`);
+  console.log(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
   loadedServers.set(config.name, loadedServer);
 
   return loadedServer;
@@ -183,6 +305,30 @@ export function getAllTools() {
 }
 
 /**
+ * Get all resources from loaded servers
+ * @returns {Array}
+ */
+export function getAllResources() {
+  const allResources = [];
+  for (const server of loadedServers.values()) {
+    allResources.push(...server.resources);
+  }
+  return allResources;
+}
+
+/**
+ * Get all prompts from loaded servers
+ * @returns {Array}
+ */
+export function getAllPrompts() {
+  const allPrompts = [];
+  for (const server of loadedServers.values()) {
+    allPrompts.push(...server.prompts);
+  }
+  return allPrompts;
+}
+
+/**
  * Call a tool by its aggregated name
  * @param {string} toolName
  * @param {object} args
@@ -200,6 +346,44 @@ export async function callTool(toolName, args) {
     }
   }
   throw new Error(`Tool not found: ${toolName}`);
+}
+
+/**
+ * Read a resource by its aggregated URI
+ * @param {string} uri
+ * @returns {Promise<any>}
+ */
+export async function readResource(uri) {
+  for (const server of loadedServers.values()) {
+    const resource = server.resources.find(r => r.uri === uri);
+    if (resource) {
+      const result = await server.client.readResource({
+        uri: resource.originalUri,
+      });
+      return result;
+    }
+  }
+  throw new Error(`Resource not found: ${uri}`);
+}
+
+/**
+ * Get a prompt by its aggregated name
+ * @param {string} promptName
+ * @param {object} args
+ * @returns {Promise<any>}
+ */
+export async function getPrompt(promptName, args) {
+  for (const server of loadedServers.values()) {
+    const prompt = server.prompts.find(p => p.name === promptName);
+    if (prompt) {
+      const result = await server.client.getPrompt({
+        name: prompt.originalName,
+        arguments: args,
+      });
+      return result;
+    }
+  }
+  throw new Error(`Prompt not found: ${promptName}`);
 }
 
 /**
