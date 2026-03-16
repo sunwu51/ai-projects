@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-/** @type {Map<string, {name: string, client: Client, tools: Array, resources: Array, prompts: Array}>} */
+/** @type {Map<string, {name: string, client: Client, tools: Array, resources: Array, resourceTemplates: Array, prompts: Array}>} */
 const loadedServers = new Map();
 
 /**
@@ -32,6 +32,16 @@ function makeToolName(serverName, toolName) {
  */
 function makeResourceUri(serverName, uri) {
   return `${sanitizeServerName(serverName)}_${uri}`;
+}
+
+/**
+ * Create a resource template URI with server prefix
+ * @param {string} serverName
+ * @param {string} uriTemplate
+ * @returns {string}
+ */
+function makeResourceTemplateUri(serverName, uriTemplate) {
+  return `${sanitizeServerName(serverName)}_${uriTemplate}`;
 }
 
 /**
@@ -68,6 +78,19 @@ function filterResources(resources, enabledResources) {
     return resources;
   }
   return resources.filter(resource => enabledResources.includes(resource.uri));
+}
+
+/**
+ * Filter resource templates by enabledResourceTemplates list
+ * @param {Array} resourceTemplates
+ * @param {string[]|undefined} enabledResourceTemplates
+ * @returns {Array}
+ */
+function filterResourceTemplates(resourceTemplates, enabledResourceTemplates) {
+  if (!enabledResourceTemplates || enabledResourceTemplates.length === 0) {
+    return resourceTemplates;
+  }
+  return resourceTemplates.filter(rt => enabledResourceTemplates.includes(rt.uriTemplate));
 }
 
 /**
@@ -134,6 +157,25 @@ async function loadHttpServer(config) {
     console.warn(`[mcp-center] Server ${config.name} does not support resources:`, error.message);
   }
 
+  // Load resource templates
+  let resourceTemplates = [];
+  try {
+    const resourceTemplatesResponse = await client.listResourceTemplates();
+    const rawResourceTemplates = resourceTemplatesResponse.resourceTemplates || [];
+    const filteredResourceTemplates = filterResourceTemplates(rawResourceTemplates, config.enabledResourceTemplates);
+
+    resourceTemplates = filteredResourceTemplates.map(rt => ({
+      uriTemplate: makeResourceTemplateUri(config.name, rt.uriTemplate),
+      originalUriTemplate: rt.uriTemplate,
+      serverName: config.name,
+      name: rt.name || '',
+      description: rt.description || '',
+      mimeType: rt.mimeType,
+    }));
+  } catch (error) {
+    console.warn(`[mcp-center] Server ${config.name} does not support resource templates:`, error.message);
+  }
+
   // Load prompts
   let prompts = [];
   try {
@@ -152,7 +194,7 @@ async function loadHttpServer(config) {
     console.warn(`[mcp-center] Server ${config.name} does not support prompts:`, error.message);
   }
 
-  return { name: config.name, client, tools, resources, prompts };
+  return { name: config.name, client, tools, resources, resourceTemplates, prompts };
 }
 
 /**
@@ -210,6 +252,25 @@ async function loadStdioServer(config) {
     console.warn(`[mcp-center] Server ${config.name} does not support resources:`, error.message);
   }
 
+  // Load resource templates
+  let resourceTemplates = [];
+  try {
+    const resourceTemplatesResponse = await client.listResourceTemplates();
+    const rawResourceTemplates = resourceTemplatesResponse.resourceTemplates || [];
+    const filteredResourceTemplates = filterResourceTemplates(rawResourceTemplates, config.enabledResourceTemplates);
+
+    resourceTemplates = filteredResourceTemplates.map(rt => ({
+      uriTemplate: makeResourceTemplateUri(config.name, rt.uriTemplate),
+      originalUriTemplate: rt.uriTemplate,
+      serverName: config.name,
+      name: rt.name || '',
+      description: rt.description || '',
+      mimeType: rt.mimeType,
+    }));
+  } catch (error) {
+    console.warn(`[mcp-center] Server ${config.name} does not support resource templates:`, error.message);
+  }
+
   // Load prompts
   let prompts = [];
   try {
@@ -228,7 +289,7 @@ async function loadStdioServer(config) {
     console.warn(`[mcp-center] Server ${config.name} does not support prompts:`, error.message);
   }
 
-  return { name: config.name, client, tools, resources, prompts };
+  return { name: config.name, client, tools, resources, resourceTemplates, prompts };
 }
 
 /**
@@ -238,7 +299,7 @@ async function loadStdioServer(config) {
  */
 export async function loadServer(config) {
   const transportType = config.url ? 'http' : 'stdio';
-  console.log(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
+  console.error(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
 
   let loadedServer;
   if (transportType === 'http') {
@@ -247,7 +308,7 @@ export async function loadServer(config) {
     loadedServer = await loadStdioServer(config);
   }
 
-  console.log(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
+  console.error(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.resourceTemplates.length} resource template(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
   loadedServers.set(config.name, loadedServer);
 
   return loadedServer;
@@ -317,6 +378,18 @@ export function getAllResources() {
 }
 
 /**
+ * Get all resource templates from loaded servers
+ * @returns {Array}
+ */
+export function getAllResourceTemplates() {
+  const allResourceTemplates = [];
+  for (const server of loadedServers.values()) {
+    allResourceTemplates.push(...server.resourceTemplates);
+  }
+  return allResourceTemplates;
+}
+
+/**
  * Get all prompts from loaded servers
  * @returns {Array}
  */
@@ -354,6 +427,7 @@ export async function callTool(toolName, args) {
  * @returns {Promise<any>}
  */
 export async function readResource(uri) {
+  // First, try to match against static resources
   for (const server of loadedServers.values()) {
     const resource = server.resources.find(r => r.uri === uri);
     if (resource) {
@@ -363,6 +437,24 @@ export async function readResource(uri) {
       return result;
     }
   }
+
+  // If no static resource matched, try to match against resource templates.
+  // The aggregated URI has the format: `${serverName}_${originalUri}`.
+  // We find the server whose prefix matches, strip the prefix, and forward
+  // the original URI to the child server for resolution.
+  for (const server of loadedServers.values()) {
+    const prefix = `${sanitizeServerName(server.name)}_`;
+    if (uri.startsWith(prefix) && server.resourceTemplates.length > 0) {
+      const originalUri = uri.slice(prefix.length);
+      try {
+        const result = await server.client.readResource({ uri: originalUri });
+        return result;
+      } catch {
+        // This server couldn't handle it, try next
+      }
+    }
+  }
+
   throw new Error(`Resource not found: ${uri}`);
 }
 
@@ -394,7 +486,7 @@ export async function closeAllServers() {
   for (const [name, server] of loadedServers) {
     try {
       await server.client.close();
-      console.log(`[mcp-center] Closed server "${name}"`);
+      console.error(`[mcp-center] Closed server "${name}"`);
     } catch (error) {
       console.warn(`[mcp-center] Error closing server "${name}":`, error);
     }

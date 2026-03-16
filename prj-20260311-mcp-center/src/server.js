@@ -7,6 +7,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
@@ -16,6 +17,7 @@ import {
   reloadServer,
   getAllTools,
   getAllResources,
+  getAllResourceTemplates,
   getAllPrompts,
   callTool,
   readResource,
@@ -71,6 +73,18 @@ export function createMcpServer() {
     };
   });
 
+  srv.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+    const resourceTemplates = getAllResourceTemplates();
+    return {
+      resourceTemplates: resourceTemplates.map(rt => ({
+        uriTemplate: rt.uriTemplate,
+        name: rt.name,
+        description: rt.description,
+        mimeType: rt.mimeType,
+      })),
+    };
+  });
+
   srv.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
     try {
@@ -117,7 +131,7 @@ async function reloadAllServers() {
   const config = getConfig();
   if (!config) return;
 
-  console.log('[mcp-center] Reloading servers...');
+  console.error('[mcp-center] Reloading servers...');
 
   const loadedServers = getLoadedServers();
   const existingNames = new Set(config.servers.map(s => s.name));
@@ -128,7 +142,7 @@ async function reloadAllServers() {
       try {
         await loaded.client.close();
         loadedServers.delete(name);
-        console.log(`[mcp-center] Removed server "${name}"`);
+        console.error(`[mcp-center] Removed server "${name}"`);
       } catch (error) {
         console.warn(`[mcp-center] Error closing server "${name}":`, error);
       }
@@ -144,7 +158,7 @@ async function reloadAllServers() {
     }
   }
 
-  console.log('[mcp-center] Reload complete');
+  console.error('[mcp-center] Reload complete');
 }
 
 /**
@@ -240,7 +254,7 @@ async function runHttp(port) {
       transport.onclose = () => {
         if (transport.sessionId) {
           sessions.delete(transport.sessionId);
-          console.log(`[mcp-center] Session ${transport.sessionId} closed`);
+          console.error(`[mcp-center] Session ${transport.sessionId} closed`);
         }
       };
 
@@ -248,7 +262,7 @@ async function runHttp(port) {
 
       if (transport.sessionId) {
         sessions.set(transport.sessionId, { transport, server: sessionServer });
-        console.log(`[mcp-center] New session: ${transport.sessionId}`);
+        console.error(`[mcp-center] New session: ${transport.sessionId}`);
       }
       return;
     }
@@ -272,14 +286,14 @@ async function runHttp(port) {
 
   await new Promise((resolve, reject) => {
     httpServer.listen(port, () => {
-      console.log(`[mcp-center] HTTP server running on http://localhost:${port}/mcp`);
+      console.error(`[mcp-center] HTTP server running on http://localhost:${port}/mcp`);
       resolve();
     });
     httpServer.on('error', reject);
   });
 
   const shutdown = async () => {
-    console.log('[mcp-center] Shutting down...');
+    console.error('[mcp-center] Shutting down...');
     unwatchConfig();
     await closeAllServers();
     httpServer.close(() => process.exit(0));
@@ -299,10 +313,10 @@ async function runHttp(port) {
  */
 export async function runServer(transport, configPath) {
   const path = configPath || getDefaultConfigPath();
-  console.log(`[mcp-center] Loading config from: ${path}`);
+  console.error(`[mcp-center] Loading config from: ${path}`);
 
   const config = loadConfig(path);
-  console.log(`[mcp-center] Loaded ${config.servers.length} server(s) from config`);
+  console.error(`[mcp-center] Loaded ${config.servers.length} server(s) from config`);
 
   await loadAllServers(config.servers);
 
@@ -310,7 +324,7 @@ export async function runServer(transport, configPath) {
 
   watchConfig(reloadAllServers);
 
-  console.log(`[mcp-center] Starting MCP Center server (${transport} transport)...`);
+  console.error(`[mcp-center] Starting MCP Center server (${transport} transport)...`);
 
   if (transport === 'stdio') {
     await runStdio(mcpServer);

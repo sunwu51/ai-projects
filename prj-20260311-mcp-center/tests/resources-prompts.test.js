@@ -154,7 +154,8 @@ describe('Resources and Prompts Integration', () => {
     });
 
     it('should throw error for non-existent resource', async () => {
-      await expect(readResource('test_test://nonexistent')).rejects.toThrow('Resource not found');
+      // URI with unknown server prefix should throw since no server matches
+      await expect(readResource('unknown_test://nonexistent')).rejects.toThrow('Resource not found');
     });
 
     it('should throw error for non-existent prompt', async () => {

@@ -11,6 +11,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
@@ -91,6 +92,17 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
   ],
 }));
 
+server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+  resourceTemplates: [
+    {
+      uriTemplate: 'test://user/{userId}/profile',
+      name: 'User Profile',
+      description: 'Returns the profile data for a specific user',
+      mimeType: 'application/json',
+    },
+  ],
+}));
+
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
 
@@ -113,6 +125,25 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
           uri: 'test://data',
           mimeType: 'application/json',
           text: JSON.stringify({ status: 'ok', timestamp: Date.now() }),
+        },
+      ],
+    };
+  }
+
+  // Handle resource template: test://user/{userId}/profile
+  const userProfileMatch = uri.match(/^test:\/\/user\/([^/]+)\/profile$/);
+  if (userProfileMatch) {
+    const userId = userProfileMatch[1];
+    return {
+      contents: [
+        {
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify({
+            userId,
+            name: `User ${userId}`,
+            email: `user${userId}@test.com`,
+          }),
         },
       ],
     };

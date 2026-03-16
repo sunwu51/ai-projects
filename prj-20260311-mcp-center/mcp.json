@@ -8,7 +8,7 @@
     {
       "name": "test",
       "command": "node",
-      "args": ["tests/test-mcp-server.js"]
+      "args": ["/Users/yao.wu/Desktop/code/ai-projects/prj-20260311-mcp-center/tests/test-mcp-server.js"]
     }
   ]
 }
