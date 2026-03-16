@@ -1,20 +1,61 @@
 # MCP Center
 
-MCP Center is an MCP (Model Context Protocol) server management tool that aggregates multiple MCP servers into a single server.
+MCP Center is an MCP (Model Context Protocol) server management tool that aggregates multiple MCP servers into a single server. It proxies tools, resources, resource templates, and prompts from multiple child MCP servers, exposing them through a unified interface with server-name prefixing to avoid conflicts.
+
+## Quick Start
+
+### 1. Create a config file
+
+Create an `mcp.json` file anywhere on your machine:
+
+```json
+{
+  "servers": [
+    {
+      "name": "exa",
+      "url": "https://mcp.exa.ai/mcp"
+    },
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"]
+    }
+  ]
+}
+```
+
+### 2. Configure in your AI agent
+
+**Claude Code:**
+
+```bash
+claude mcp add mcp-center -- npx -y @sunwu51/mcp-center -c /path/to/mcp.json
+```
+
+**Cursor / Windsurf / other MCP clients** - add to your MCP config file:
+
+```json
+{
+  "mcpServers": {
+    "mcp-center": {
+      "command": "npx",
+      "args": ["-y", "@sunwu51/mcp-center", "-c", "/path/to/mcp.json"]
+    }
+  }
+}
+```
+
+That's it. Your AI agent now has access to all tools, resources, and prompts from the configured MCP servers.
 
 ## Features
 
-- **Unified Interface**: Aggregates tools from multiple MCP servers into one
-- **Tool Naming**: Exposes tools with prefix format `mcpservername_toolname`
+- **Unified Interface**: Aggregates tools, resources, resource templates, and prompts from multiple MCP servers
+- **Namespacing**: Exposes entities with prefix format `serverName_originalName` to avoid conflicts
 - **Dual Transport**: Supports both stdio and HTTP (streamable) transports
-- **Hot Reload**: Automatically reloads tools when configuration changes (no restart needed)
-- **Tool Filtering**: Enable specific tools per server via configuration
+- **Hot Reload**: Automatically reloads when configuration changes (no restart needed)
+- **Selective Filtering**: Enable specific tools/resources/prompts per server via configuration
 
-## Installation
-
-```bash
-npm install
-```
+---
 
 ## Configuration
 

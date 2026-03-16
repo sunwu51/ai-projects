@@ -1,9 +1,15 @@
 {
-  "name": "mcp-center",
-  "version": "1.0.0",
+  "name": "@sunwu51/mcp-center",
+  "version": "1.0.5",
   "description": "MCP Server management tool that aggregates multiple MCP servers",
   "main": "src/index.js",
+  "bin": {
+    "mcp-center": "src/index.js"
+  },
   "type": "module",
+  "files": [
+    "src/"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "start:stdio": "node src/index.js --transport stdio",
@@ -18,6 +24,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1"
   },

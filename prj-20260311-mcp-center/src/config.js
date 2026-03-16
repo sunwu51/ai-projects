@@ -80,10 +80,10 @@ export function watchConfig(callback) {
   reloadCallback = callback;
 
   watchFile(configPath, { interval: 1000 }, () => {
-    console.log('[mcp-center] Config file changed, reloading...');
+    console.error('[mcp-center] Config file changed, reloading...');
     try {
       const newConfig = loadConfig(configPath);
-      console.log(`[mcp-center] Loaded ${newConfig.servers.length} server(s)`);
+      console.error(`[mcp-center] Loaded ${newConfig.servers.length} server(s)`);
       if (reloadCallback) {
         reloadCallback();
       }
