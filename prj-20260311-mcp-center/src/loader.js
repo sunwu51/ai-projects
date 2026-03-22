@@ -524,3 +524,53 @@ export function getLoadedServers() {
 export function getServerStatus() {
   return serverStatus;
 }
+
+/**
+ * Temporarily connect to a server config, fetch its capabilities, then disconnect.
+ * Used by the UI "probe" feature before the server is saved.
+ * @param {object} config
+ * @returns {Promise<{tools: Array, resources: Array, resourceTemplates: Array, prompts: Array}>}
+ */
+export async function probeServer(config) {
+  let client;
+  try {
+    if (config.url) {
+      const opts = {};
+      if (config.httpHeaders && Object.keys(config.httpHeaders).length > 0) {
+        opts.requestInit = { headers: config.httpHeaders };
+      }
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const transport = new StreamableHTTPClientTransport(new URL(config.url), opts);
+      client = new Client({ name: 'mcp-center-probe', version: '1.0.0' }, {});
+      await client.connect(transport);
+    } else {
+      if (!config.command) throw new Error('command is required for stdio transport');
+      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+      const transport = new StdioClientTransport({
+        command: config.command,
+        args: config.args || [],
+        env: config.env ? { ...process.env, ...config.env } : undefined,
+      });
+      client = new Client({ name: 'mcp-center-probe', version: '1.0.0' }, {});
+      await client.connect(transport);
+    }
+
+    const [toolsRes, resourcesRes, templatesRes, promptsRes] = await Promise.allSettled([
+      client.listTools(),
+      client.listResources(),
+      client.listResourceTemplates(),
+      client.listPrompts(),
+    ]);
+
+    return {
+      tools: toolsRes.status === 'fulfilled' ? (toolsRes.value.tools || []).map(t => ({ name: t.name, description: t.description || '' })) : [],
+      resources: resourcesRes.status === 'fulfilled' ? (resourcesRes.value.resources || []).map(r => ({ uri: r.uri, name: r.name || '', description: r.description || '' })) : [],
+      resourceTemplates: templatesRes.status === 'fulfilled' ? (templatesRes.value.resourceTemplates || []).map(r => ({ uriTemplate: r.uriTemplate, name: r.name || '', description: r.description || '' })) : [],
+      prompts: promptsRes.status === 'fulfilled' ? (promptsRes.value.prompts || []).map(p => ({ name: p.name, description: p.description || '' })) : [],
+    };
+  } finally {
+    if (client) {
+      try { await client.close(); } catch (_) {}
+    }
+  }
+}

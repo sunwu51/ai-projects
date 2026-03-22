@@ -1,5 +1,6 @@
 import { createServer as createHttpServer } from 'http';
 import { randomUUID } from 'crypto';
+import { UI_HTML } from './ui.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
@@ -164,266 +165,6 @@ async function reloadAllServers() {
   console.error('[mcp-center] Reload complete');
 }
 
-const UI_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MCP Center - Server Management</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
-    .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 30px; }
-    h1 { color: #333; margin-bottom: 30px; font-size: 28px; }
-    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
-    .btn-primary { background: #007bff; color: white; }
-    .btn-primary:hover { background: #0056b3; }
-    .btn-danger { background: #dc3545; color: white; }
-    .btn-danger:hover { background: #c82333; }
-    .btn-success { background: #28a745; color: white; }
-    .btn-success:hover { background: #218838; }
-    .server-list { margin-top: 20px; }
-    .server-item { border: 1px solid #ddd; border-radius: 4px; padding: 15px; margin-bottom: 10px; background: #fafafa; }
-    .server-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .server-name { font-weight: bold; font-size: 18px; color: #333; }
-    .server-type { display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 12px; margin-left: 10px; }
-    .type-http { background: #d1ecf1; color: #0c5460; }
-    .type-stdio { background: #d4edda; color: #155724; }
-    .status-badge { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 12px; margin-left: 8px; }
-    .status-connected { background: #d4edda; color: #155724; }
-    .status-failed { background: #f8d7da; color: #721c24; }
-    .status-loading { background: #fff3cd; color: #856404; }
-    .error-msg { font-size: 12px; color: #721c24; margin-top: 4px; background: #f8d7da; padding: 4px 8px; border-radius: 3px; }
-    .server-details { font-size: 14px; color: #666; margin-top: 5px; }
-    .form-group { margin-bottom: 15px; }
-    label { display: block; margin-bottom: 5px; font-weight: 500; color: #333; }
-    input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
-    textarea { min-height: 80px; font-family: monospace; }
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
-    .modal-content { background: white; margin: 50px auto; padding: 30px; border-radius: 8px; max-width: 600px; max-height: 80vh; overflow-y: auto; }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .close { font-size: 28px; cursor: pointer; color: #999; }
-    .close:hover { color: #333; }
-    .type-fields { display: none; }
-    .type-fields.active { display: block; }
-    .btn-group { display: flex; gap: 10px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>MCP Center - Server Management</h1>
-    <button class="btn btn-primary" onclick="openAddModal()">+ Add Server</button>
-    <div class="server-list" id="serverList"></div>
-  </div>
-
-  <div id="modal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 id="modalTitle">Add Server</h2>
-        <span class="close" onclick="closeModal()">&times;</span>
-      </div>
-      <form id="serverForm" onsubmit="saveServer(event)">
-        <div class="form-group">
-          <label>Server Name *</label>
-          <input type="text" id="serverName" required>
-        </div>
-        <div class="form-group">
-          <label>Server Type *</label>
-          <select id="serverType" onchange="toggleTypeFields()" required>
-            <option value="http">HTTP</option>
-            <option value="stdio">STDIO</option>
-          </select>
-        </div>
-        <div id="httpFields" class="type-fields active">
-          <div class="form-group">
-            <label>URL *</label>
-            <input type="url" id="serverUrl">
-          </div>
-          <div class="form-group">
-            <label>HTTP Headers (JSON)</label>
-            <textarea id="serverHeaders" placeholder='{"Authorization": "Bearer token"}'></textarea>
-          </div>
-        </div>
-        <div id="stdioFields" class="type-fields">
-          <div class="form-group">
-            <label>Command *</label>
-            <input type="text" id="serverCommand">
-          </div>
-          <div class="form-group">
-            <label>Arguments (JSON array)</label>
-            <textarea id="serverArgs" placeholder='["arg1", "arg2"]'></textarea>
-          </div>
-          <div class="form-group">
-            <label>Environment Variables (JSON)</label>
-            <textarea id="serverEnv" placeholder='{"KEY": "value"}'></textarea>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Enabled Tools (comma-separated, leave empty for all)</label>
-          <input type="text" id="enabledTools">
-        </div>
-        <div class="btn-group">
-          <button type="submit" class="btn btn-success">Save</button>
-          <button type="button" class="btn" onclick="closeModal()">Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <script>
-    let editingIndex = -1;
-
-    async function loadServers() {
-      const [serversRes, statusRes] = await Promise.all([
-        fetch('/api/servers'),
-        fetch('/api/servers/status'),
-      ]);
-      const servers = await serversRes.json();
-      const statusMap = await statusRes.json();
-      const list = document.getElementById('serverList');
-      list.innerHTML = servers.map((s, i) => {
-        const type = s.url ? 'http' : 'stdio';
-        const details = type === 'http' 
-          ? \`URL: \${s.url}\${s.httpHeaders ? ' | Headers: ' + JSON.stringify(s.httpHeaders) : ''}\`
-          : \`Command: \${s.command} \${(s.args || []).join(' ')}\${s.env ? ' | Env: ' + JSON.stringify(s.env) : ''}\`;
-        const st = statusMap[s.name];
-        const statusHtml = st
-          ? (st.status === 'connected'
-              ? \`<span class="status-badge status-connected">connected</span>\`
-              : \`<span class="status-badge status-failed">failed</span>\`)
-          : \`<span class="status-badge status-loading">loading...</span>\`;
-        const errorHtml = st && st.status === 'failed' && st.error
-          ? \`<div class="error-msg">Error: \${st.error}</div>\`
-          : '';
-        return \`
-          <div class="server-item">
-            <div class="server-header">
-              <div>
-                <span class="server-name">\${s.name}</span>
-                <span class="server-type type-\${type}">\${type.toUpperCase()}</span>
-                \${statusHtml}
-              </div>
-              <div class="btn-group">
-                <button class="btn btn-primary" onclick="editServer(\${i})">Edit</button>
-                <button class="btn btn-danger" onclick="deleteServer(\${i})">Delete</button>
-              </div>
-            </div>
-            <div class="server-details">\${details}</div>
-            \${s.enabledTools ? \`<div class="server-details">Enabled Tools: \${s.enabledTools.join(', ')}</div>\` : ''}
-            \${errorHtml}
-          </div>
-        \`;
-      }).join('');
-    }
-
-    function openAddModal() {
-      editingIndex = -1;
-      document.getElementById('modalTitle').textContent = 'Add Server';
-      document.getElementById('serverForm').reset();
-      document.getElementById('modal').style.display = 'block';
-      toggleTypeFields();
-    }
-
-    async function editServer(index) {
-      const res = await fetch('/api/servers');
-      const servers = await res.json();
-      const server = servers[index];
-      editingIndex = index;
-      
-      document.getElementById('modalTitle').textContent = 'Edit Server';
-      document.getElementById('serverName').value = server.name;
-      document.getElementById('serverType').value = server.url ? 'http' : 'stdio';
-      
-      if (server.url) {
-        document.getElementById('serverUrl').value = server.url;
-        document.getElementById('serverHeaders').value = server.httpHeaders ? JSON.stringify(server.httpHeaders, null, 2) : '';
-      } else {
-        document.getElementById('serverCommand').value = server.command || '';
-        document.getElementById('serverArgs').value = server.args ? JSON.stringify(server.args) : '';
-        document.getElementById('serverEnv').value = server.env ? JSON.stringify(server.env, null, 2) : '';
-      }
-      
-      document.getElementById('enabledTools').value = server.enabledTools ? server.enabledTools.join(', ') : '';
-      document.getElementById('modal').style.display = 'block';
-      toggleTypeFields();
-    }
-
-    async function deleteServer(index) {
-      if (!confirm('Are you sure you want to delete this server?')) return;
-      await fetch(\`/api/servers/\${index}\`, { method: 'DELETE' });
-      loadServers();
-    }
-
-    async function saveServer(e) {
-      e.preventDefault();
-      const name = document.getElementById('serverName').value;
-      const type = document.getElementById('serverType').value;
-      const enabledTools = document.getElementById('enabledTools').value
-        .split(',').map(t => t.trim()).filter(t => t);
-      
-      const server = { name };
-      if (enabledTools.length > 0) server.enabledTools = enabledTools;
-      
-      if (type === 'http') {
-        server.url = document.getElementById('serverUrl').value;
-        const headers = document.getElementById('serverHeaders').value.trim();
-        if (headers) {
-          try {
-            server.httpHeaders = JSON.parse(headers);
-          } catch (e) {
-            alert('Invalid JSON for HTTP headers');
-            return;
-          }
-        }
-      } else {
-        server.command = document.getElementById('serverCommand').value;
-        const args = document.getElementById('serverArgs').value.trim();
-        if (args) {
-          try {
-            server.args = JSON.parse(args);
-          } catch (e) {
-            alert('Invalid JSON for arguments');
-            return;
-          }
-        }
-        const env = document.getElementById('serverEnv').value.trim();
-        if (env) {
-          try {
-            server.env = JSON.parse(env);
-          } catch (e) {
-            alert('Invalid JSON for environment variables');
-            return;
-          }
-        }
-      }
-      
-      const method = editingIndex >= 0 ? 'PUT' : 'POST';
-      const url = editingIndex >= 0 ? \`/api/servers/\${editingIndex}\` : '/api/servers';
-      
-      await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(server)
-      });
-      
-      closeModal();
-      loadServers();
-    }
-
-    function closeModal() {
-      document.getElementById('modal').style.display = 'none';
-    }
-
-    function toggleTypeFields() {
-      const type = document.getElementById('serverType').value;
-      document.getElementById('httpFields').classList.toggle('active', type === 'http');
-      document.getElementById('stdioFields').classList.toggle('active', type === 'stdio');
-    }
-
-    loadServers();
-  </script>
-</body>
-</html>`;
 
 /**
  * Run in HTTP mode with API and UI
@@ -459,6 +200,44 @@ async function runHttp(port) {
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(status));
+      return;
+    }
+
+    // API: Get capabilities (tools/resources/templates/prompts) for a loaded server
+    if (url.pathname.match(/^\/api\/servers\/([^/]+)\/capabilities$/) && req.method === 'GET') {
+      const serverName = decodeURIComponent(url.pathname.split('/')[3]);
+      const loaded = getLoadedServers().get(serverName);
+      if (!loaded) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Server not found or not connected' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        tools: loaded.tools.map(t => ({ name: t.originalName, description: t.description })),
+        resources: loaded.resources.map(r => ({ uri: r.originalUri, name: r.name, description: r.description })),
+        resourceTemplates: loaded.resourceTemplates.map(r => ({ uriTemplate: r.originalUriTemplate, name: r.name, description: r.description })),
+        prompts: loaded.prompts.map(p => ({ name: p.originalName, description: p.description })),
+      }));
+      return;
+    }
+
+    // API: Probe a server config (temporary connection) to list its tools
+    if (url.pathname === '/api/probe' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const config = JSON.parse(body);
+          const { probeServer } = await import('./loader.js');
+          const result = await probeServer(config);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
       return;
     }
 
