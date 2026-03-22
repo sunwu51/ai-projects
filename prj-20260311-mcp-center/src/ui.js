@@ -167,9 +167,10 @@ export const UI_HTML = `<!DOCTYPE html>
 
       list.innerHTML = servers.map((s, i) => {
         const type = s.url ? 'http' : 'stdio';
+        const maskObj = obj => JSON.stringify(Object.fromEntries(Object.keys(obj).map(k => [k, '******'])));
         const details = type === 'http'
-          ? 'URL: ' + s.url + (s.httpHeaders ? ' | Headers: ' + JSON.stringify(s.httpHeaders) : '')
-          : 'Command: ' + s.command + ' ' + (s.args || []).join(' ') + (s.env ? ' | Env: ' + JSON.stringify(s.env) : '');
+          ? 'URL: ' + s.url + (s.httpHeaders && Object.keys(s.httpHeaders).length ? ' | Headers: ' + maskObj(s.httpHeaders) : '')
+          : 'Command: ' + s.command + ' ' + (s.args || []).join(' ') + (s.env && Object.keys(s.env).length ? ' | Env: ' + maskObj(s.env) : '');
         const enabled = s.enabled !== false;
         const st = statusMap[s.name];
         let statusHtml = '';
@@ -525,6 +526,7 @@ export const UI_HTML = `<!DOCTYPE html>
           setButtonLoading(saveBtn, false, 'Save');
           return;
         }
+        setButtonLoading(saveBtn, false, 'Save');
         closeModal();
         await loadServers();
       } catch(e) {
