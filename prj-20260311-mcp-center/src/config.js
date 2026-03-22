@@ -1,5 +1,6 @@
-import { readFileSync, existsSync, watchFile, unwatchFile } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, existsSync, watchFile, unwatchFile, writeFileSync, mkdirSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { homedir } from 'os';
 
 let currentConfig = null;
 let configPath = '';
@@ -104,9 +105,47 @@ export function unwatchConfig() {
 }
 
 /**
- * Get the default config path (mcp.json in cwd)
+ * Get the default config path (~/.mcp-center/mcp.json)
  * @returns {string}
  */
 export function getDefaultConfigPath() {
-  return resolve(process.cwd(), 'mcp.json');
+  return resolve(homedir(), '.mcp-center', 'mcp.json');
+}
+
+/**
+ * Ensure default config file exists
+ * @returns {string} Path to config file
+ */
+export function ensureDefaultConfig() {
+  const defaultPath = getDefaultConfigPath();
+  const dir = dirname(defaultPath);
+  
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  
+  if (!existsSync(defaultPath)) {
+    writeFileSync(defaultPath, JSON.stringify({ servers: [] }, null, 2), 'utf-8');
+  }
+  
+  return defaultPath;
+}
+
+/**
+ * Save config to file
+ * @param {object} config
+ * @param {string} path
+ */
+export function saveConfig(config, path) {
+  const resolvedPath = path || configPath;
+  if (!resolvedPath) {
+    throw new Error('No config path specified');
+  }
+  
+  if (!validateConfig(config)) {
+    throw new Error('Invalid config object');
+  }
+  
+  writeFileSync(resolvedPath, JSON.stringify(config, null, 2), 'utf-8');
+  currentConfig = config;
 }

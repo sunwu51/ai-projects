@@ -107,6 +107,23 @@ function filterPrompts(prompts, enabledPrompts) {
 }
 
 /**
+ * Load all servers from config in parallel
+ * @param {Array} servers
+ * @returns {Promise<void>}
+ */
+export async function loadAllServers(servers) {
+  const loadPromises = servers.map(async (serverConfig) => {
+    try {
+      await loadServer(serverConfig);
+    } catch (error) {
+      console.error(`[mcp-center] Failed to load server "${serverConfig.name}":`, error);
+    }
+  });
+  
+  await Promise.all(loadPromises);
+}
+
+/**
  * Load an HTTP-based MCP server
  * @param {object} config
  * @returns {Promise<object>}
@@ -333,25 +350,7 @@ export async function reloadServer(config) {
   return loadServer(config);
 }
 
-/**
- * Load all servers from configs
- * @param {Array} configs
- * @returns {Promise<Array>}
- */
-export async function loadAllServers(configs) {
-  const results = [];
 
-  for (const config of configs) {
-    try {
-      const loaded = await loadServer(config);
-      results.push(loaded);
-    } catch (error) {
-      console.error(`[mcp-center] Failed to load server "${config.name}":`, error);
-    }
-  }
-
-  return results;
-}
 
 /**
  * Get all tools from loaded servers

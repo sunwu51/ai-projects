@@ -12,8 +12,6 @@
   ],
   "scripts": {
     "start": "node src/index.js",
-    "start:stdio": "node src/index.js --transport stdio",
-    "start:http": "node src/index.js --transport http",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "keywords": [
