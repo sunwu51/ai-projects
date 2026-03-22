@@ -289,6 +289,24 @@ async function runHttp(port) {
       return;
     }
 
+    // API: Toggle server enabled/disabled
+    if (url.pathname.match(/^\/api\/servers\/\d+\/toggle$/) && req.method === 'PATCH') {
+      const index = parseInt(url.pathname.split('/')[3]);
+      const config = getConfig();
+      if (index < 0 || index >= config.servers.length) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Server not found' }));
+        return;
+      }
+      // Toggle: if enabled is undefined or true, set to false; otherwise set to true
+      config.servers[index].enabled = config.servers[index].enabled === false ? true : false;
+      saveConfig(config);
+      await reloadAllServers();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, enabled: config.servers[index].enabled }));
+      return;
+    }
+
     // API: Delete server
     if (url.pathname.startsWith('/api/servers/') && req.method === 'DELETE') {
       const index = parseInt(url.pathname.split('/')[3]);

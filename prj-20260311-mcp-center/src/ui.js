@@ -20,6 +20,18 @@ export const UI_HTML = `<!DOCTYPE html>
     .btn-secondary:hover { background: #545b62; }
     .btn-info { background: #17a2b8; color: white; }
     .btn-info:hover { background: #117a8b; }
+    .btn:disabled { opacity: 0.65; cursor: not-allowed; }
+    .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.4); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 4px; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .toggle-wrap { display: flex; align-items: center; gap: 6px; }
+    .toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; border-radius: 22px; transition: 0.2s; }
+    .toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+    .toggle input:checked + .toggle-slider { background: #28a745; }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(18px); }
+    .toggle input:disabled + .toggle-slider { opacity: 0.5; cursor: not-allowed; }
+    .server-item.disabled-server { opacity: 0.55; }
     .server-list { margin-top: 20px; }
     .server-item { border: 1px solid #ddd; border-radius: 6px; padding: 15px; margin-bottom: 12px; background: #fafafa; }
     .server-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
@@ -158,32 +170,41 @@ export const UI_HTML = `<!DOCTYPE html>
         const details = type === 'http'
           ? 'URL: ' + s.url + (s.httpHeaders ? ' | Headers: ' + JSON.stringify(s.httpHeaders) : '')
           : 'Command: ' + s.command + ' ' + (s.args || []).join(' ') + (s.env ? ' | Env: ' + JSON.stringify(s.env) : '');
+        const enabled = s.enabled !== false;
         const st = statusMap[s.name];
-        const statusHtml = st
-          ? (st.status === 'connected'
-              ? '<span class="status-badge status-connected">connected</span>'
-              : '<span class="status-badge status-failed">failed</span>')
-          : '<span class="status-badge status-loading">loading...</span>';
-        const errorHtml = st && st.status === 'failed' && st.error
+        let statusHtml = '';
+        if (!enabled) {
+          statusHtml = '<span class="status-badge" style="background:#e2e3e5;color:#6c757d">disabled</span>';
+        } else if (st) {
+          statusHtml = st.status === 'connected'
+            ? '<span class="status-badge status-connected">connected</span>'
+            : '<span class="status-badge status-failed">failed</span>';
+        } else {
+          statusHtml = '<span class="status-badge status-loading">loading...</span>';
+        }
+        const errorHtml = enabled && st && st.status === 'failed' && st.error
           ? '<div class="error-msg">Error: ' + escHtml(st.error) + '</div>'
           : '';
         const capsId = 'caps-' + i;
-        return '<div class="server-item">' +
+        return '<div class="server-item' + (enabled ? '' : ' disabled-server') + '" id="server-item-' + i + '">' +
           '<div class="server-header">' +
-            '<div>' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
               '<span class="server-name">' + escHtml(s.name) + '</span>' +
               '<span class="server-type type-' + type + '">' + type.toUpperCase() + '</span>' +
               statusHtml +
             '</div>' +
-            '<div class="btn-group">' +
-              '<button class="btn btn-primary" onclick="editServer(' + i + ')">Edit</button>' +
-              '<button class="btn btn-danger" onclick="deleteServer(' + i + ')">Delete</button>' +
+            '<div class="btn-group" style="align-items:center">' +
+              '<div class="toggle-wrap" title="' + (enabled ? 'Click to disable' : 'Click to enable') + '">' +
+                '<label class="toggle"><input type="checkbox" id="toggle-' + i + '" ' + (enabled ? 'checked' : '') + ' onchange="toggleServer(' + i + ', this)"><span class="toggle-slider"></span></label>' +
+              '</div>' +
+              '<button class="btn btn-primary" id="edit-btn-' + i + '" onclick="editServer(' + i + ')">Edit</button>' +
+              '<button class="btn btn-danger" id="delete-btn-' + i + '" onclick="deleteServer(' + i + ')">Delete</button>' +
             '</div>' +
           '</div>' +
           '<div class="server-details">' + escHtml(details) + '</div>' +
           (s.enabledTools ? '<div class="server-details">Enabled Tools: ' + escHtml(s.enabledTools.join(', ')) + '</div>' : '') +
           errorHtml +
-          (st && st.status === 'connected'
+          (enabled && st && st.status === 'connected'
             ? '<div class="caps-section" id="' + capsId + '"><span style="font-size:12px;color:#999">Loading capabilities...</span></div>'
             : '') +
         '</div>';
@@ -192,10 +213,38 @@ export const UI_HTML = `<!DOCTYPE html>
       // Load capabilities for connected servers
       servers.forEach((s, i) => {
         const st = statusMap[s.name];
-        if (st && st.status === 'connected') {
+        if (s.enabled !== false && st && st.status === 'connected') {
           loadCaps(s.name, 'caps-' + i);
         }
       });
+    }
+
+    function setButtonLoading(btn, loading, originalText) {
+      if (loading) {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner"></span>' + originalText;
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = btn.dataset.originalText || originalText;
+      }
+    }
+
+    async function toggleServer(index, checkbox) {
+      checkbox.disabled = true;
+      try {
+        const res = await fetch('/api/servers/' + index + '/toggle', { method: 'PATCH' });
+        if (!res.ok) {
+          const data = await res.json();
+          alert('Error: ' + (data.error || 'Unknown error'));
+          checkbox.checked = !checkbox.checked; // revert
+        }
+        await loadServers();
+      } catch(e) {
+        alert('Error: ' + e.message);
+        checkbox.checked = !checkbox.checked;
+        checkbox.disabled = false;
+      }
     }
 
     function escHtml(str) {
@@ -389,8 +438,21 @@ export const UI_HTML = `<!DOCTYPE html>
 
     async function deleteServer(index) {
       if (!confirm('Are you sure you want to delete this server?')) return;
-      await fetch('/api/servers/' + index, { method: 'DELETE' });
-      loadServers();
+      const btn = document.getElementById('delete-btn-' + index);
+      setButtonLoading(btn, true, 'Deleting...');
+      try {
+        const res = await fetch('/api/servers/' + index, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json();
+          alert('Error: ' + (data.error || 'Unknown error'));
+          setButtonLoading(btn, false, 'Delete');
+          return;
+        }
+        await loadServers();
+      } catch(e) {
+        alert('Error: ' + e.message);
+        setButtonLoading(btn, false, 'Delete');
+      }
     }
 
     async function saveServer(e) {
@@ -447,14 +509,28 @@ export const UI_HTML = `<!DOCTYPE html>
       const method = editingIndex >= 0 ? 'PUT' : 'POST';
       const url = editingIndex >= 0 ? '/api/servers/' + editingIndex : '/api/servers';
 
-      await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(server)
-      });
+      const saveBtn = document.querySelector('#serverForm .btn-success');
+      setButtonLoading(saveBtn, true, 'Saving...');
+      saveBtn.disabled = true;
 
-      closeModal();
-      loadServers();
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(server)
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          alert('Error: ' + (data.error || 'Unknown error'));
+          setButtonLoading(saveBtn, false, 'Save');
+          return;
+        }
+        closeModal();
+        await loadServers();
+      } catch(e) {
+        alert('Error: ' + e.message);
+        setButtonLoading(saveBtn, false, 'Save');
+      }
     }
 
     function closeModal() {

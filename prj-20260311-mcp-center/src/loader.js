@@ -116,6 +116,11 @@ function filterPrompts(prompts, enabledPrompts) {
  */
 export async function loadAllServers(servers) {
   const loadPromises = servers.map(async (serverConfig) => {
+    if (serverConfig.enabled === false) {
+      console.error(`[mcp-center] Skipping disabled server "${serverConfig.name}"`);
+      serverStatus.set(serverConfig.name, { status: 'disabled' });
+      return;
+    }
     try {
       await loadServer(serverConfig);
     } catch (error) {
@@ -362,6 +367,12 @@ export async function reloadServer(config) {
     loadedServers.delete(config.name);
   }
   serverStatus.delete(config.name);
+
+  if (config.enabled === false) {
+    console.error(`[mcp-center] Skipping disabled server "${config.name}"`);
+    serverStatus.set(config.name, { status: 'disabled' });
+    return null;
+  }
 
   return loadServer(config);
 }
