@@ -5,6 +5,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 /** @type {Map<string, {name: string, client: Client, tools: Array, resources: Array, resourceTemplates: Array, prompts: Array}>} */
 const loadedServers = new Map();
 
+/** @type {Map<string, {status: 'connected'|'failed', error?: string}>} */
+const serverStatus = new Map();
+
 /**
  * Sanitize server name for use in tool names
  * @param {string} name
@@ -133,7 +136,11 @@ async function loadHttpServer(config) {
     throw new Error(`Server ${config.name}: url is required for HTTP transport`);
   }
 
-  const transport = new StreamableHTTPClientTransport(new URL(config.url));
+  const opts = {};
+  if (config.httpHeaders && Object.keys(config.httpHeaders).length > 0) {
+    opts.requestInit = { headers: config.httpHeaders };
+  }
+  const transport = new StreamableHTTPClientTransport(new URL(config.url), opts);
 
   const client = new Client(
     { name: `mcp-center-${config.name}`, version: '1.0.0' },
@@ -227,7 +234,7 @@ async function loadStdioServer(config) {
   const transport = new StdioClientTransport({
     command: config.command,
     args: config.args || [],
-    env: config.env,
+    env: config.env ? { ...process.env, ...config.env } : undefined,
   });
 
   const client = new Client(
@@ -319,14 +326,22 @@ export async function loadServer(config) {
   console.error(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
 
   let loadedServer;
-  if (transportType === 'http') {
-    loadedServer = await loadHttpServer(config);
-  } else {
-    loadedServer = await loadStdioServer(config);
+  try {
+    if (transportType === 'http') {
+      loadedServer = await loadHttpServer(config);
+    } else {
+      loadedServer = await loadStdioServer(config);
+    }
+  } catch (error) {
+    const errMsg = error.message || String(error);
+    console.error(`[mcp-center] Failed to load server "${config.name}": ${errMsg}`);
+    serverStatus.set(config.name, { status: 'failed', error: errMsg });
+    throw error;
   }
 
   console.error(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.resourceTemplates.length} resource template(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
   loadedServers.set(config.name, loadedServer);
+  serverStatus.set(config.name, { status: 'connected' });
 
   return loadedServer;
 }
@@ -346,6 +361,7 @@ export async function reloadServer(config) {
     }
     loadedServers.delete(config.name);
   }
+  serverStatus.delete(config.name);
 
   return loadServer(config);
 }
@@ -499,4 +515,12 @@ export async function closeAllServers() {
  */
 export function getLoadedServers() {
   return loadedServers;
+}
+
+/**
+ * Get the server status map
+ * @returns {Map}
+ */
+export function getServerStatus() {
+  return serverStatus;
 }

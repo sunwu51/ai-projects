@@ -23,6 +23,7 @@ import {
   getPrompt,
   closeAllServers,
   getLoadedServers,
+  getServerStatus,
 } from './loader.js';
 import { loadConfig, watchConfig, getConfig, ensureDefaultConfig, unwatchConfig, saveConfig } from './config.js';
 
@@ -188,6 +189,11 @@ const UI_HTML = `<!DOCTYPE html>
     .server-type { display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 12px; margin-left: 10px; }
     .type-http { background: #d1ecf1; color: #0c5460; }
     .type-stdio { background: #d4edda; color: #155724; }
+    .status-badge { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 12px; margin-left: 8px; }
+    .status-connected { background: #d4edda; color: #155724; }
+    .status-failed { background: #f8d7da; color: #721c24; }
+    .status-loading { background: #fff3cd; color: #856404; }
+    .error-msg { font-size: 12px; color: #721c24; margin-top: 4px; background: #f8d7da; padding: 4px 8px; border-radius: 3px; }
     .server-details { font-size: 14px; color: #666; margin-top: 5px; }
     .form-group { margin-bottom: 15px; }
     label { display: block; margin-bottom: 5px; font-weight: 500; color: #333; }
@@ -268,20 +274,34 @@ const UI_HTML = `<!DOCTYPE html>
     let editingIndex = -1;
 
     async function loadServers() {
-      const res = await fetch('/api/servers');
-      const servers = await res.json();
+      const [serversRes, statusRes] = await Promise.all([
+        fetch('/api/servers'),
+        fetch('/api/servers/status'),
+      ]);
+      const servers = await serversRes.json();
+      const statusMap = await statusRes.json();
       const list = document.getElementById('serverList');
       list.innerHTML = servers.map((s, i) => {
         const type = s.url ? 'http' : 'stdio';
         const details = type === 'http' 
           ? \`URL: \${s.url}\${s.httpHeaders ? ' | Headers: ' + JSON.stringify(s.httpHeaders) : ''}\`
           : \`Command: \${s.command} \${(s.args || []).join(' ')}\${s.env ? ' | Env: ' + JSON.stringify(s.env) : ''}\`;
+        const st = statusMap[s.name];
+        const statusHtml = st
+          ? (st.status === 'connected'
+              ? \`<span class="status-badge status-connected">connected</span>\`
+              : \`<span class="status-badge status-failed">failed</span>\`)
+          : \`<span class="status-badge status-loading">loading...</span>\`;
+        const errorHtml = st && st.status === 'failed' && st.error
+          ? \`<div class="error-msg">Error: \${st.error}</div>\`
+          : '';
         return \`
           <div class="server-item">
             <div class="server-header">
               <div>
                 <span class="server-name">\${s.name}</span>
                 <span class="server-type type-\${type}">\${type.toUpperCase()}</span>
+                \${statusHtml}
               </div>
               <div class="btn-group">
                 <button class="btn btn-primary" onclick="editServer(\${i})">Edit</button>
@@ -290,6 +310,7 @@ const UI_HTML = `<!DOCTYPE html>
             </div>
             <div class="server-details">\${details}</div>
             \${s.enabledTools ? \`<div class="server-details">Enabled Tools: \${s.enabledTools.join(', ')}</div>\` : ''}
+            \${errorHtml}
           </div>
         \`;
       }).join('');
@@ -427,6 +448,17 @@ async function runHttp(port) {
       const config = getConfig();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(config.servers));
+      return;
+    }
+
+    // API: Get server status
+    if (url.pathname === '/api/servers/status' && req.method === 'GET') {
+      const status = {};
+      for (const [name, s] of getServerStatus()) {
+        status[name] = s;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(status));
       return;
     }
 
