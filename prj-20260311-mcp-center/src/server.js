@@ -2,7 +2,6 @@
 
 import { createServer as createHttpServer } from 'http';
 import { randomUUID } from 'crypto';
-import { pathToFileURL } from 'url';
 import { UI_HTML } from './ui.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -431,6 +430,4 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
-}
+main();
