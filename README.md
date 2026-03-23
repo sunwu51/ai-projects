@@ -29,12 +29,18 @@ OpenCode AI 实现功能 + 写测试
 #### 安装 OpenCode GitHub App
 访问 [github.com/apps/opencode-agent](https://github.com/apps/opencode-agent)，将其安装到本仓库。
 
-#### 添加 API 密钥
+#### 添加 API 密钥、变量
 进入仓库 **Settings → Secrets and variables → Actions**，添加：
 
 | 密钥名称 | 说明 |
 |---------|------|
-| `SILICONFLOW_API_KEY` | 从 [cloud.siliconflow.cn](https://cloud.siliconflow.cn) 获取 |
+| `OPENCODE_API_KEY` | 供应商的sk |
+
+| 变量名称 | 说明 |
+|---------|------|
+| `OPENCODE_BASE_URL` | 供应商的url |
+| `OPENCODE_MODEL`    | 使用的模型名 |
+
 
 ### 2. 创建新项目
 
