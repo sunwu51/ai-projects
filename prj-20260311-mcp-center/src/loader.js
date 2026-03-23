@@ -127,7 +127,7 @@ function filterPrompts(prompts, enabledPrompts) {
 export async function loadAllServers(servers) {
   const loadPromises = servers.map(async (serverConfig) => {
     if (serverConfig.enabled === false) {
-      console.error(`[mcp-center] Skipping disabled server "${serverConfig.name}"`);
+      console.log(`[mcp-center] Skipping disabled server "${serverConfig.name}"`);
       serverStatus.set(serverConfig.name, { status: 'disabled' });
       return;
     }
@@ -338,7 +338,7 @@ async function loadStdioServer(config) {
  */
 export async function loadServer(config) {
   const transportType = config.url ? 'http' : 'stdio';
-  console.error(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
+  console.log(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
 
   let loadedServer;
   try {
@@ -354,7 +354,7 @@ export async function loadServer(config) {
     throw error;
   }
 
-  console.error(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.resourceTemplates.length} resource template(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
+  console.log(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.resourceTemplates.length} resource template(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
   loadedServer.config = config;
   loadedServers.set(config.name, loadedServer);
   serverStatus.set(config.name, { status: 'connected' });
@@ -372,7 +372,7 @@ export async function reloadServer(config) {
 
   // If already loaded and config hasn't changed, skip reconnection
   if (existing && existing.config && !serverConfigChanged(existing.config, config)) {
-    console.error(`[mcp-center] Skipping unchanged server "${config.name}"`);
+    console.log(`[mcp-center] Skipping unchanged server "${config.name}"`);
     return existing;
   }
 
@@ -387,7 +387,7 @@ export async function reloadServer(config) {
   serverStatus.delete(config.name);
 
   if (config.enabled === false) {
-    console.error(`[mcp-center] Skipping disabled server "${config.name}"`);
+    console.log(`[mcp-center] Skipping disabled server "${config.name}"`);
     serverStatus.set(config.name, { status: 'disabled' });
     return null;
   }
@@ -530,7 +530,7 @@ export async function closeAllServers() {
   for (const [name, server] of loadedServers) {
     try {
       await server.client.close();
-      console.error(`[mcp-center] Closed server "${name}"`);
+      console.log(`[mcp-center] Closed server "${name}"`);
     } catch (error) {
       console.warn(`[mcp-center] Error closing server "${name}":`, error);
     }

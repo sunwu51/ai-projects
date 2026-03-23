@@ -1,68 +1,107 @@
 # MCP Center
 
-MCP Center is an MCP (Model Context Protocol) server management tool that aggregates multiple MCP servers into a single server. It proxies tools, resources, resource templates, and prompts from multiple child MCP servers, exposing them through a unified interface with server-name prefixing to avoid conflicts.
+MCP Center is a local MCP gateway with a built-in Web UI. It manages multiple child MCP servers, keeps their configuration in one place, and exposes a single Streamable HTTP MCP endpoint for your client to connect to.
 
-## Features
+It can aggregate:
 
-- **Unified Interface**: Aggregates tools, resources, resource templates, and prompts from multiple MCP servers
-- **Namespacing**: Exposes entities with prefix format `serverName_originalName` to avoid conflicts
-- **HTTP Transport**: HTTP streamable transport with web UI for management
-- **Web UI**: Manage MCP servers through a browser interface
-- **REST API**: Add, update, and delete servers via HTTP API
-- **Hot Reload**: Automatically reloads when configuration changes (no restart needed)
-- **Parallel Loading**: Servers are loaded in parallel for faster startup
-- **Selective Filtering**: Enable specific tools/resources/prompts per server via configuration
+- tools
+- resources
+- resource templates
+- prompts
+
+To avoid collisions, every exposed capability is prefixed with the child server name:
+
+- tool: `exa_web_search_exa`
+- resource: `filesystem_file:///tmp/a.txt`
+- prompt: `docs_summarize`
+
+## Usage Model
+
+Run MCP Center directly with `npx`, then connect your MCP client to the HTTP endpoint it starts:
+
+1. Start `mcp-center` with `npx @sunwu51/mcp-center`
+2. Open the Web UI to add or edit child MCP servers
+3. Point your MCP client at `http://localhost:3000/mcp`
 
 ## Quick Start
 
-### 1. Start the server
+### 1. Start MCP Center
 
 ```bash
 npx @sunwu51/mcp-center
 ```
 
-By default, it creates and uses `~/.mcp-center/mcp.json` as the configuration file.
+This command executes the package's CLI entry directly. No global install is required.
 
-Or specify a custom config file:
+By default it uses `~/.mcp-center/mcp.json`. If the file does not exist, it will be created automatically as:
+
+```json
+{
+  "servers": []
+}
+```
+
+You can also pass a custom config path:
 
 ```bash
 npx @sunwu51/mcp-center --config /path/to/mcp.json
 ```
 
-### 2. Access the Web UI
+Or:
 
-Open your browser and navigate to:
-
+```bash
+npx @sunwu51/mcp-center /path/to/mcp.json
 ```
+
+### 2. Open the Web UI
+
+Open:
+
+```text
 http://localhost:3000/ui
 ```
 
-Use the web interface to add, edit, and delete MCP servers.
+From the UI you can:
 
-### 3. Configure in your AI agent
+- add HTTP or stdio child MCP servers
+- edit server config
+- enable or disable a server
+- delete a server
+- probe a server before saving to inspect tools/resources/templates/prompts
+- selectively enable only part of a server's capabilities
+- view connection status and loaded capabilities
 
-**Claude Code:**
+### 3. Connect your MCP client to MCP Center
 
-```bash
-claude mcp add mcp-center -- npx -y @sunwu51/mcp-center
+Use this endpoint:
+
+```text
+http://localhost:3000/mcp
 ```
 
-**Cursor / Windsurf / other MCP clients** - add to your MCP config file:
+Your MCP client must support Streamable HTTP transport.
 
-```json
-{
-  "mcpServers": {
-    "mcp-center": {
-      "command": "npx",
-      "args": ["-y", "@sunwu51/mcp-center"]
-    }
-  }
-}
-```
+## How It Works
 
-## Configuration
+MCP Center acts as a proxy in front of multiple child servers:
 
-The configuration file (`mcp.json`) has the following structure:
+- child servers can be HTTP MCP servers or local stdio MCP servers
+- MCP Center connects to them as a client
+- it lists their capabilities and republishes them through one HTTP endpoint
+- calls and reads are forwarded to the original child server
+
+Capability filtering is applied per child server:
+
+- `enabledTools`
+- `enabledResources`
+- `enabledResourceTemplates`
+- `enabledPrompts`
+
+If a filtering field is omitted or empty, MCP Center exposes all items of that type from that child server.
+
+## Configuration File
+
+The config file format is:
 
 ```json
 {
@@ -78,144 +117,126 @@ The configuration file (`mcp.json`) has the following structure:
     {
       "name": "filesystem",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"],
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/path/to/workspace"
+      ],
       "env": {
         "NODE_ENV": "production"
       },
-      "enabledTools": ["read_file", "write_file"]
+      "enabledTools": ["read_file", "write_file"],
+      "enabledResources": ["file:///path/to/workspace/README.md"],
+      "enabledPrompts": ["summarize_file"]
     }
   ]
 }
 ```
 
-### Configuration Options
+### Server Fields
 
-#### For HTTP Servers:
-- `name` (required): Unique name for the MCP server
-- `url` (required): HTTP URL for streamable HTTP MCP servers
-- `httpHeaders` (optional): HTTP headers to send with requests
-- `enabledTools` (optional): Array of tool names to enable (enables all if not specified)
-- `enabledResources` (optional): Array of resource URIs to enable
-- `enabledResourceTemplates` (optional): Array of resource template URIs to enable
-- `enabledPrompts` (optional): Array of prompt names to enable
+Common fields:
 
-#### For STDIO Servers:
-- `name` (required): Unique name for the MCP server
-- `command` (required): Command to run for stdio MCP servers
-- `args` (optional): Command line arguments
-- `env` (optional): Environment variables
-- `enabledTools` (optional): Array of tool names to enable (enables all if not specified)
-- `enabledResources` (optional): Array of resource URIs to enable
-- `enabledResourceTemplates` (optional): Array of resource template URIs to enable
-- `enabledPrompts` (optional): Array of prompt names to enable
+- `name`: required, must be unique
+- `enabled`: optional, set `false` to keep the server in config but not connect to it
+- `enabledTools`: optional string array
+- `enabledResources`: optional string array
+- `enabledResourceTemplates`: optional string array
+- `enabledPrompts`: optional string array
 
-## Web UI
+HTTP child server fields:
 
-The web UI is available at `http://localhost:3000/ui` and provides:
+- `url`: required for HTTP transport
+- `httpHeaders`: optional request headers
 
-- **Add Server**: Create new HTTP or STDIO MCP servers
-- **Edit Server**: Modify existing server configurations
-- **Delete Server**: Remove servers from the configuration
-- **Real-time Updates**: Changes are immediately reflected in the running server
+STDIO child server fields:
 
-## REST API
+- `command`: required for stdio transport
+- `args`: optional argument array
+- `env`: optional environment variables
 
-### Get all servers
-```bash
-GET /api/servers
-```
+## Client Configuration
 
-### Add a server
-```bash
-POST /api/servers
-Content-Type: application/json
+The exact client config depends on the client, but the target should be the MCP Center HTTP endpoint:
 
+```json
 {
-  "name": "my-server",
-  "url": "https://example.com/mcp"
+  "mcpServers": {
+    "mcp-center": {
+      "url": "http://localhost:3000/mcp"
+    }
+  }
 }
 ```
 
-### Update a server
-```bash
-PUT /api/servers/:index
-Content-Type: application/json
+If your client expects a transport field, use its Streamable HTTP mode and point it to the same URL.
 
+If you want to launch MCP Center from another tool or script, use the same `npx` entry:
+
+```json
 {
-  "name": "my-server",
-  "url": "https://example.com/mcp"
+  "command": "npx",
+  "args": [
+    "-y",
+    "@sunwu51/mcp-center"
+  ]
 }
 ```
 
-### Delete a server
+## HTTP API
+
+The Web UI uses these routes:
+
+- `GET /api/servers`: list configured servers
+- `POST /api/servers`: add a server
+- `PUT /api/servers/:index`: update a server
+- `DELETE /api/servers/:index`: delete a server
+- `PATCH /api/servers/:index/toggle`: enable or disable a server
+- `GET /api/servers/status`: get current connection status
+- `GET /api/servers/:name/capabilities`: get loaded capabilities for a connected server
+- `POST /api/probe`: temporarily connect to a server config and inspect capabilities before saving
+
+## Runtime Behavior
+
+- Default port is `3000`
+- Set `PORT` to change it
+- The config file is watched for changes
+- When the config changes, MCP Center reloads child servers automatically
+- Child servers are loaded in parallel
+- Failed child servers do not stop the main HTTP service from starting
+
+Example:
+
 ```bash
-DELETE /api/servers/:index
+PORT=8080 npx @sunwu51/mcp-center
 ```
 
-## MCP Endpoint
+PowerShell:
 
-The MCP protocol endpoint is available at:
-
+```powershell
+$env:PORT=8080
+npx @sunwu51/mcp-center
 ```
-http://localhost:3000/mcp
+
+## Development
+
+Install dependencies:
+
+```bash
+npm install
 ```
 
-## Usage
-
-### Start with default config
+Run locally:
 
 ```bash
 npm start
 ```
 
-This creates `~/.mcp-center/mcp.json` if it doesn't exist.
-
-### Start with custom config
-
-```bash
-npm start -- --config /path/to/mcp.json
-```
-
-### Custom port
-
-```bash
-PORT=8080 npm start
-```
-
-## Hot Reload
-
-The server watches the `mcp.json` file for changes. When you modify the configuration:
-
-- New servers are automatically loaded in parallel
-- Removed servers are disconnected
-- Modified servers are reloaded
-- Tool/resource/prompt lists are updated automatically
-
-No restart required!
-
-## Testing
+Run tests:
 
 ```bash
 npm test
 ```
-
-## Example: Using with Exa MCP Server
-
-1. Start MCP Center:
-
-```bash
-npx @sunwu51/mcp-center
-```
-
-2. Open the web UI at `http://localhost:3000/ui`
-
-3. Click "Add Server" and configure:
-   - Name: `exa`
-   - Type: `HTTP`
-   - URL: `https://mcp.exa.ai/mcp`
-   - Enabled Tools: `web_search_exa`
-
-4. The server will expose tools with prefix `exa_` (e.g., `exa_web_search_exa`).
 
 ## License
 

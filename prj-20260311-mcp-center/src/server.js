@@ -1,5 +1,8 @@
+#!/usr/bin/env node
+
 import { createServer as createHttpServer } from 'http';
 import { randomUUID } from 'crypto';
+import { pathToFileURL } from 'url';
 import { UI_HTML } from './ui.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -396,4 +399,38 @@ export async function runServer(configPath) {
 
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   await runHttp(port);
+}
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+
+  let configPath;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    if (arg === '--config' || arg === '-c') {
+      configPath = args[i + 1];
+      i++;
+    } else if (!arg.startsWith('-')) {
+      configPath = arg;
+    }
+  }
+
+  return { configPath };
+}
+
+async function main() {
+  const { configPath } = parseArgs();
+
+  try {
+    await runServer(configPath);
+  } catch (error) {
+    console.error('[mcp-center] Fatal error:', error);
+    process.exit(1);
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }
