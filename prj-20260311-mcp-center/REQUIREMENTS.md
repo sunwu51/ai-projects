@@ -109,3 +109,32 @@ prj-20260311-mcp-center
 
 - [x] 标题中的目录名与仓库中的目录完全一致
 - [x] 已了解：提交后在评论输入 `/opencode` 触发改进
+---
+
+## Improvement Request — Issue #11
+> [https://github.com/sunwu51/ai-projects/issues/11](https://github.com/sunwu51/ai-projects/issues/11) by @sunwu51 on 2026-03-22
+
+### 目标项目目录名
+
+prj-20260311-mcp-center 
+
+### 改进需求描述
+
+## 问题描述
+- 1 当前的项目中有http streamable和stdio两个版本，请删除stdio版本，只保留http版本，便于之后维护和演进。
+- 2 添加一个http ui，来支持通过web页面增加mcp server的功能。新增的stdio版本的mcp server可以指定command和args，并且还可以指定环境变量，与mcp.json配置相对应。新增的http版本的mcp server可以指定url和httpheaders，也与mcp.json配置对应。这个http ui，主要是增加了动态添加、删除、修改mcp server的功能，在更新后，需要同时更新启动时候指定的mcp.json文件。
+- 3 如果不指定mcp.json来启动，则请默认创建一个`~/.mcp-center/mcp.json`的文件，默认是{}空对象即可。
+- 4 启动配置中已有的mcp server的时候，采用并行的启动，而不是串行，来加快启动速度。
+- 5 如果修改mcp.json也应该触发维护的mcp server的更新，但是文件更新过程中可能会出现json非法的情况，此时不要更新。需要在进程内存中也维护一个mcp server列表，如果mcp.json变动之后，对比和内存维护的列表的变化，来进行更新。
+
+## 验收标准
+- 完成以上功能。
+- 新增UI和对应的mcpserver管理的api接口，测试接口可以增删改查维护的server，并同步更新到mcp server。
+- 可以用exa的mcp server和test mcp server进行测试，更新、增删等。
+- 同时需要测试stdio 类型的mcpserver设置环境变量是否生效，http类型的header是否生效等。
+- UI页面可以采用https://github.com/sunwu51/camel-ui这个react库的样式
+
+### 提交前确认
+
+- [x] 标题中的目录名与仓库中的目录完全一致
+- [x] 已了解：提交后在评论输入 `/opencode` 触发改进

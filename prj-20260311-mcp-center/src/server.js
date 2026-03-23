@@ -1,7 +1,9 @@
+#!/usr/bin/env node
+
 import { createServer as createHttpServer } from 'http';
 import { randomUUID } from 'crypto';
+import { UI_HTML } from './ui.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
@@ -24,8 +26,9 @@ import {
   getPrompt,
   closeAllServers,
   getLoadedServers,
+  getServerStatus,
 } from './loader.js';
-import { loadConfig, watchConfig, getConfig, getDefaultConfigPath, unwatchConfig } from './config.js';
+import { loadConfig, watchConfig, getConfig, ensureDefaultConfig, unwatchConfig, saveConfig } from './config.js';
 
 /**
  * Create an MCP Server instance with tool handlers
@@ -134,11 +137,12 @@ async function reloadAllServers() {
   console.error('[mcp-center] Reloading servers...');
 
   const loadedServers = getLoadedServers();
-  const existingNames = new Set(config.servers.map(s => s.name));
+  const currentServers = new Map(Array.from(loadedServers.entries()).map(([name, server]) => [name, server]));
+  const newServerConfigs = new Map(config.servers.map(s => [s.name, s]));
 
   // Close servers not in new config
-  for (const [name, loaded] of loadedServers) {
-    if (!existingNames.has(name)) {
+  for (const [name, loaded] of currentServers) {
+    if (!newServerConfigs.has(name)) {
       try {
         await loaded.client.close();
         loadedServers.delete(name);
@@ -149,127 +153,194 @@ async function reloadAllServers() {
     }
   }
 
-  // Reload all servers
-  for (const serverConfig of config.servers) {
+  // Reload all servers in parallel
+  const reloadPromises = config.servers.map(async (serverConfig) => {
     try {
       await reloadServer(serverConfig);
     } catch (error) {
       console.error(`[mcp-center] Failed to reload server "${serverConfig.name}":`, error);
     }
-  }
+  });
+
+  await Promise.all(reloadPromises);
 
   console.error('[mcp-center] Reload complete');
 }
 
-/**
- * Run in stdio mode
- * @param {Server} mcpServer
- * @returns {Promise<void>}
- */
-async function runStdio(mcpServer) {
-  const transport = new StdioServerTransport();
-  await mcpServer.connect(transport);
-  console.error('[mcp-center] Server running on stdio');
-
-  const shutdown = async () => {
-    console.error('[mcp-center] Shutting down...');
-    unwatchConfig();
-    await closeAllServers();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
-}
 
 /**
- * Run in HTTP Streamable mode
+ * Run in HTTP mode with API and UI
  * @param {number} port
  * @returns {Promise<void>}
  */
 async function runHttp(port) {
-  // Store sessions: sessionId -> {transport, server}
   const sessions = new Map();
 
   const httpServer = createHttpServer(async (req, res) => {
-    const url = new URL(req.url, `http://localhost:${port}`);
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
-    if (url.pathname !== '/mcp') {
-      res.writeHead(404);
-      res.end('Not Found');
+    // Serve UI
+    if (url.pathname === '/' || url.pathname === '/ui') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(UI_HTML);
       return;
     }
 
-    if (req.method === 'GET') {
-      // SSE for notifications
-      const sessionId = url.searchParams.get('sessionId');
-      if (!sessionId) {
-        res.writeHead(400);
-        res.end('Missing sessionId');
-        return;
-      }
-      const session = sessions.get(sessionId);
-      if (!session) {
-        res.writeHead(404);
-        res.end('Session not found');
-        return;
-      }
-      await session.transport.handleRequest(req, res);
+    // API: Get all servers
+    if (url.pathname === '/api/servers' && req.method === 'GET') {
+      const config = getConfig();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(config.servers));
       return;
     }
 
-    if (req.method === 'POST') {
-      // Read request body
-      const chunks = [];
-      for await (const chunk of req) {
-        chunks.push(chunk);
+    // API: Get server status
+    if (url.pathname === '/api/servers/status' && req.method === 'GET') {
+      const status = {};
+      for (const [name, s] of getServerStatus()) {
+        status[name] = s;
       }
-      const bodyStr = Buffer.concat(chunks).toString('utf-8');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(status));
+      return;
+    }
 
-      let body;
-      try {
-        body = JSON.parse(bodyStr);
-      } catch {
-        res.writeHead(400);
-        res.end('Invalid JSON');
+    // API: Get capabilities (tools/resources/templates/prompts) for a loaded server
+    if (url.pathname.match(/^\/api\/servers\/([^/]+)\/capabilities$/) && req.method === 'GET') {
+      const serverName = decodeURIComponent(url.pathname.split('/')[3]);
+      const loaded = getLoadedServers().get(serverName);
+      if (!loaded) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Server not found or not connected' }));
         return;
       }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        tools: loaded.tools.map(t => ({ name: t.originalName, description: t.description })),
+        resources: loaded.resources.map(r => ({ uri: r.originalUri, name: r.name, description: r.description })),
+        resourceTemplates: loaded.resourceTemplates.map(r => ({ uriTemplate: r.originalUriTemplate, name: r.name, description: r.description })),
+        prompts: loaded.prompts.map(p => ({ name: p.originalName, description: p.description })),
+      }));
+      return;
+    }
 
-      // Check if this is an existing session
-      const sessionId = req.headers['mcp-session-id'];
-      if (sessionId && sessions.has(sessionId)) {
-        const session = sessions.get(sessionId);
-        await session.transport.handleRequest(req, res, body);
-        return;
-      }
-
-      // New session - create a fresh Server instance per connection
-      const sessionServer = createMcpServer();
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-      });
-
-      await sessionServer.connect(transport);
-
-      transport.onclose = () => {
-        if (transport.sessionId) {
-          sessions.delete(transport.sessionId);
-          console.error(`[mcp-center] Session ${transport.sessionId} closed`);
+    // API: Probe a server config (temporary connection) to list its tools
+    if (url.pathname === '/api/probe' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const config = JSON.parse(body);
+          const { probeServer } = await import('./loader.js');
+          const result = await probeServer(config);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
         }
-      };
-
-      await transport.handleRequest(req, res, body);
-
-      if (transport.sessionId) {
-        sessions.set(transport.sessionId, { transport, server: sessionServer });
-        console.error(`[mcp-center] New session: ${transport.sessionId}`);
-      }
+      });
       return;
     }
 
-    if (req.method === 'DELETE') {
-      const sessionId = req.headers['mcp-session-id'];
-      if (sessionId && sessions.has(sessionId)) {
+    // API: Add server
+    if (url.pathname === '/api/servers' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const server = JSON.parse(body);
+          const config = getConfig();
+          config.servers.push(server);
+          saveConfig(config);
+          await reloadAllServers();
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
+    // API: Update server
+    if (url.pathname.startsWith('/api/servers/') && req.method === 'PUT') {
+      const index = parseInt(url.pathname.split('/')[3]);
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const server = JSON.parse(body);
+          const config = getConfig();
+          if (index < 0 || index >= config.servers.length) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Server not found' }));
+            return;
+          }
+          config.servers[index] = server;
+          saveConfig(config);
+          await reloadAllServers();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
+    // API: Toggle server enabled/disabled
+    if (url.pathname.match(/^\/api\/servers\/\d+\/toggle$/) && req.method === 'PATCH') {
+      const index = parseInt(url.pathname.split('/')[3]);
+      const config = getConfig();
+      if (index < 0 || index >= config.servers.length) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Server not found' }));
+        return;
+      }
+      // Toggle: if enabled is undefined or true, set to false; otherwise set to true
+      config.servers[index].enabled = config.servers[index].enabled === false ? true : false;
+      saveConfig(config);
+      await reloadAllServers();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, enabled: config.servers[index].enabled }));
+      return;
+    }
+
+    // API: Delete server
+    if (url.pathname.startsWith('/api/servers/') && req.method === 'DELETE') {
+      const index = parseInt(url.pathname.split('/')[3]);
+      const config = getConfig();
+      if (index < 0 || index >= config.servers.length) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Server not found' }));
+        return;
+      }
+      config.servers.splice(index, 1);
+      saveConfig(config);
+      await reloadAllServers();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+      return;
+    }
+
+    // MCP endpoint
+    if (url.pathname === '/mcp' && req.method === 'POST') {
+      const sessionId = randomUUID();
+      const mcpServer = createMcpServer();
+      const transport = new StreamableHTTPServerTransport('/mcp', sessionId);
+      sessions.set(sessionId, { server: mcpServer, transport });
+
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res);
+      return;
+    }
+
+    if (url.pathname.startsWith('/mcp/') && req.method === 'POST') {
+      const sessionId = url.pathname.split('/')[2];
+      if (sessions.has(sessionId)) {
         const session = sessions.get(sessionId);
         await session.transport.handleRequest(req, res);
         sessions.delete(sessionId);
@@ -280,13 +351,15 @@ async function runHttp(port) {
       return;
     }
 
-    res.writeHead(405);
-    res.end('Method Not Allowed');
+    res.writeHead(404);
+    res.end('Not Found');
   });
 
   await new Promise((resolve, reject) => {
     httpServer.listen(port, () => {
-      console.error(`[mcp-center] HTTP server running on http://localhost:${port}/mcp`);
+      console.error(`[mcp-center] HTTP server running on http://localhost:${port}`);
+      console.error(`[mcp-center] UI available at http://localhost:${port}/ui`);
+      console.error(`[mcp-center] MCP endpoint at http://localhost:${port}/mcp`);
       resolve();
     });
     httpServer.on('error', reject);
@@ -307,12 +380,11 @@ async function runHttp(port) {
 
 /**
  * Main entry point to run the mcp-center server
- * @param {'stdio'|'http'} transport
  * @param {string|undefined} configPath
  * @returns {Promise<void>}
  */
-export async function runServer(transport, configPath) {
-  const path = configPath || getDefaultConfigPath();
+export async function runServer(configPath) {
+  const path = configPath || ensureDefaultConfig();
   console.error(`[mcp-center] Loading config from: ${path}`);
 
   const config = loadConfig(path);
@@ -320,16 +392,42 @@ export async function runServer(transport, configPath) {
 
   await loadAllServers(config.servers);
 
-  const mcpServer = createMcpServer();
-
   watchConfig(reloadAllServers);
 
-  console.error(`[mcp-center] Starting MCP Center server (${transport} transport)...`);
+  console.error('[mcp-center] Starting MCP Center server (HTTP transport)...');
 
-  if (transport === 'stdio') {
-    await runStdio(mcpServer);
-  } else {
-    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-    await runHttp(port);
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  await runHttp(port);
+}
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+
+  let configPath;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    if (arg === '--config' || arg === '-c') {
+      configPath = args[i + 1];
+      i++;
+    } else if (!arg.startsWith('-')) {
+      configPath = arg;
+    }
+  }
+
+  return { configPath };
+}
+
+async function main() {
+  const { configPath } = parseArgs();
+
+  try {
+    await runServer(configPath);
+  } catch (error) {
+    console.error('[mcp-center] Fatal error:', error);
+    process.exit(1);
   }
 }
+
+main();

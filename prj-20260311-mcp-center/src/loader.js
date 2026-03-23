@@ -2,8 +2,21 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-/** @type {Map<string, {name: string, client: Client, tools: Array, resources: Array, resourceTemplates: Array, prompts: Array}>} */
+/** @type {Map<string, {name: string, client: Client, tools: Array, resources: Array, resourceTemplates: Array, prompts: Array, config: object}>} */
 const loadedServers = new Map();
+
+/**
+ * Deep-compare two server configs to determine if reconnection is needed
+ * @param {object} a
+ * @param {object} b
+ * @returns {boolean}
+ */
+function serverConfigChanged(a, b) {
+  return JSON.stringify(a) !== JSON.stringify(b);
+}
+
+/** @type {Map<string, {status: 'connected'|'failed', error?: string}>} */
+const serverStatus = new Map();
 
 /**
  * Sanitize server name for use in tool names
@@ -107,6 +120,28 @@ function filterPrompts(prompts, enabledPrompts) {
 }
 
 /**
+ * Load all servers from config in parallel
+ * @param {Array} servers
+ * @returns {Promise<void>}
+ */
+export async function loadAllServers(servers) {
+  const loadPromises = servers.map(async (serverConfig) => {
+    if (serverConfig.enabled === false) {
+      console.log(`[mcp-center] Skipping disabled server "${serverConfig.name}"`);
+      serverStatus.set(serverConfig.name, { status: 'disabled' });
+      return;
+    }
+    try {
+      await loadServer(serverConfig);
+    } catch (error) {
+      console.error(`[mcp-center] Failed to load server "${serverConfig.name}":`, error);
+    }
+  });
+  
+  await Promise.all(loadPromises);
+}
+
+/**
  * Load an HTTP-based MCP server
  * @param {object} config
  * @returns {Promise<object>}
@@ -116,7 +151,11 @@ async function loadHttpServer(config) {
     throw new Error(`Server ${config.name}: url is required for HTTP transport`);
   }
 
-  const transport = new StreamableHTTPClientTransport(new URL(config.url));
+  const opts = {};
+  if (config.httpHeaders && Object.keys(config.httpHeaders).length > 0) {
+    opts.requestInit = { headers: config.httpHeaders };
+  }
+  const transport = new StreamableHTTPClientTransport(new URL(config.url), opts);
 
   const client = new Client(
     { name: `mcp-center-${config.name}`, version: '1.0.0' },
@@ -210,7 +249,7 @@ async function loadStdioServer(config) {
   const transport = new StdioClientTransport({
     command: config.command,
     args: config.args || [],
-    env: config.env,
+    env: config.env ? { ...process.env, ...config.env } : undefined,
   });
 
   const client = new Client(
@@ -299,28 +338,44 @@ async function loadStdioServer(config) {
  */
 export async function loadServer(config) {
   const transportType = config.url ? 'http' : 'stdio';
-  console.error(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
+  console.log(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
 
   let loadedServer;
-  if (transportType === 'http') {
-    loadedServer = await loadHttpServer(config);
-  } else {
-    loadedServer = await loadStdioServer(config);
+  try {
+    if (transportType === 'http') {
+      loadedServer = await loadHttpServer(config);
+    } else {
+      loadedServer = await loadStdioServer(config);
+    }
+  } catch (error) {
+    const errMsg = error.message || String(error);
+    console.error(`[mcp-center] Failed to load server "${config.name}": ${errMsg}`);
+    serverStatus.set(config.name, { status: 'failed', error: errMsg });
+    throw error;
   }
 
-  console.error(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.resourceTemplates.length} resource template(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
+  console.log(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.resourceTemplates.length} resource template(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
+  loadedServer.config = config;
   loadedServers.set(config.name, loadedServer);
+  serverStatus.set(config.name, { status: 'connected' });
 
   return loadedServer;
 }
 
 /**
- * Reload a single server (close existing connection first)
+ * Reload a single server (close existing connection first, skip if config unchanged)
  * @param {object} config
  * @returns {Promise<object>}
  */
 export async function reloadServer(config) {
   const existing = loadedServers.get(config.name);
+
+  // If already loaded and config hasn't changed, skip reconnection
+  if (existing && existing.config && !serverConfigChanged(existing.config, config)) {
+    console.log(`[mcp-center] Skipping unchanged server "${config.name}"`);
+    return existing;
+  }
+
   if (existing) {
     try {
       await existing.client.close();
@@ -329,29 +384,18 @@ export async function reloadServer(config) {
     }
     loadedServers.delete(config.name);
   }
+  serverStatus.delete(config.name);
+
+  if (config.enabled === false) {
+    console.log(`[mcp-center] Skipping disabled server "${config.name}"`);
+    serverStatus.set(config.name, { status: 'disabled' });
+    return null;
+  }
 
   return loadServer(config);
 }
 
-/**
- * Load all servers from configs
- * @param {Array} configs
- * @returns {Promise<Array>}
- */
-export async function loadAllServers(configs) {
-  const results = [];
 
-  for (const config of configs) {
-    try {
-      const loaded = await loadServer(config);
-      results.push(loaded);
-    } catch (error) {
-      console.error(`[mcp-center] Failed to load server "${config.name}":`, error);
-    }
-  }
-
-  return results;
-}
 
 /**
  * Get all tools from loaded servers
@@ -486,7 +530,7 @@ export async function closeAllServers() {
   for (const [name, server] of loadedServers) {
     try {
       await server.client.close();
-      console.error(`[mcp-center] Closed server "${name}"`);
+      console.log(`[mcp-center] Closed server "${name}"`);
     } catch (error) {
       console.warn(`[mcp-center] Error closing server "${name}":`, error);
     }
@@ -500,4 +544,62 @@ export async function closeAllServers() {
  */
 export function getLoadedServers() {
   return loadedServers;
+}
+
+/**
+ * Get the server status map
+ * @returns {Map}
+ */
+export function getServerStatus() {
+  return serverStatus;
+}
+
+/**
+ * Temporarily connect to a server config, fetch its capabilities, then disconnect.
+ * Used by the UI "probe" feature before the server is saved.
+ * @param {object} config
+ * @returns {Promise<{tools: Array, resources: Array, resourceTemplates: Array, prompts: Array}>}
+ */
+export async function probeServer(config) {
+  let client;
+  try {
+    if (config.url) {
+      const opts = {};
+      if (config.httpHeaders && Object.keys(config.httpHeaders).length > 0) {
+        opts.requestInit = { headers: config.httpHeaders };
+      }
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const transport = new StreamableHTTPClientTransport(new URL(config.url), opts);
+      client = new Client({ name: 'mcp-center-probe', version: '1.0.0' }, {});
+      await client.connect(transport);
+    } else {
+      if (!config.command) throw new Error('command is required for stdio transport');
+      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+      const transport = new StdioClientTransport({
+        command: config.command,
+        args: config.args || [],
+        env: config.env ? { ...process.env, ...config.env } : undefined,
+      });
+      client = new Client({ name: 'mcp-center-probe', version: '1.0.0' }, {});
+      await client.connect(transport);
+    }
+
+    const [toolsRes, resourcesRes, templatesRes, promptsRes] = await Promise.allSettled([
+      client.listTools(),
+      client.listResources(),
+      client.listResourceTemplates(),
+      client.listPrompts(),
+    ]);
+
+    return {
+      tools: toolsRes.status === 'fulfilled' ? (toolsRes.value.tools || []).map(t => ({ name: t.name, description: t.description || '' })) : [],
+      resources: resourcesRes.status === 'fulfilled' ? (resourcesRes.value.resources || []).map(r => ({ uri: r.uri, name: r.name || '', description: r.description || '' })) : [],
+      resourceTemplates: templatesRes.status === 'fulfilled' ? (templatesRes.value.resourceTemplates || []).map(r => ({ uriTemplate: r.uriTemplate, name: r.name || '', description: r.description || '' })) : [],
+      prompts: promptsRes.status === 'fulfilled' ? (promptsRes.value.prompts || []).map(p => ({ name: p.name, description: p.description || '' })) : [],
+    };
+  } finally {
+    if (client) {
+      try { await client.close(); } catch (_) {}
+    }
+  }
 }
