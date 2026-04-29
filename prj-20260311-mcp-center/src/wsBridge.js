@@ -1,9 +1,9 @@
 import { WebSocketServer } from 'ws';
 
 const TOOL_CALL_TIMEOUT_MS = 60000;
+const PING_INTERVAL_MS = 30000;
 
-const configs = new Map();       // name -> config
-const connections = new Map();   // name -> { ws, tools, rpcId }
+const connections = new Map();   // name -> { ws, tools, rpcId, pingTimer }
 const pending = new Map();       // name -> Map<rpcId, {resolve, reject, timer}>
 
 let wss = null;
@@ -11,6 +11,7 @@ let wss = null;
 /**
  * Create WebSocket server attached to the existing HTTP server.
  * Listens on /ws/:serverName path for wsBridge client connections.
+ * Any client that connects is automatically registered.
  * @param {import('http').Server} httpServer
  */
 export function createWsServer(httpServer) {
@@ -18,24 +19,12 @@ export function createWsServer(httpServer) {
 
   httpServer.on('upgrade', (req, socket, head) => {
     try {
-      // req.url is typically "/ws/tabmanager" for WebSocket upgrade requests
       const host = req.headers.host || 'localhost';
       const url = new URL(req.url, `http://${host}`);
       const match = url.pathname.match(/^\/ws\/(.+)$/);
-      if (!match) {
-        // Not a wsBridge path — ignore, let other handlers deal with it
-        return;
-      }
+      if (!match) return;
 
       const serverName = decodeURIComponent(match[1]);
-      const config = configs.get(serverName);
-      if (!config) {
-        console.error(`[mcp-center] wsBridge: unknown server "${serverName}" — add it to mcp.json first`);
-        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-        socket.destroy();
-        return;
-      }
-
       wss.handleUpgrade(req, socket, head, (ws) => {
         handleConnection(serverName, ws);
       });
@@ -47,26 +36,19 @@ export function createWsServer(httpServer) {
 }
 
 /**
- * Register a wsBridge server config (called by loader).
- * Tools will be populated when the client connects.
- * @param {object} config
+ * Get connected wsBridge servers with their tool counts.
+ * @returns {Array<{name: string, connected: boolean, tools: number}>}
  */
-export function registerWsBridgeConfig(config) {
-  configs.set(config.name, config);
-  console.error(`[mcp-center] wsBridge: registered config for "${config.name}"`);
-}
-
-/**
- * Unregister a wsBridge config and close its connection.
- * @param {string} serverName
- */
-export function unregisterWsBridgeConfig(serverName) {
-  configs.delete(serverName);
-  const conn = connections.get(serverName);
-  if (conn) {
-    conn.ws.close();
-    cleanupConnection(serverName);
+export function getWsBridgeServers() {
+  const result = [];
+  for (const [name, conn] of connections) {
+    result.push({
+      name,
+      connected: true,
+      tools: conn.tools?.length || 0
+    });
   }
+  return result;
 }
 
 /**
@@ -85,32 +67,18 @@ export function getWsBridgeTools(serverName) {
  */
 export function getWsBridgeStatus() {
   const status = {};
-  for (const [name, config] of configs) {
+  for (const [name, conn] of connections) {
     status[name] = {
       name,
-      configured: true,
-      connected: connections.has(name),
-      tools: connections.get(name)?.tools?.length || 0
+      connected: true,
+      tools: conn.tools?.length || 0
     };
   }
   return status;
 }
 
 /**
- * Check if a server name belongs to a wsBridge config.
- * @param {string} serverName
- * @returns {boolean}
- */
-export function isWsBridgeServer(serverName) {
-  return configs.has(serverName);
-}
-
-/**
- * Call a tool on a wsBridge server. Returns a promise that resolves with the MCP result.
- * @param {string} serverName
- * @param {string} toolName - original tool name (without prefix)
- * @param {object} args
- * @returns {Promise<object>}
+ * Call a tool on a wsBridge server.
  */
 export function callWsBridgeTool(serverName, toolName, args) {
   const conn = connections.get(serverName);
@@ -151,11 +119,11 @@ export function callWsBridgeTool(serverName, toolName, args) {
  */
 export function closeWsBridgeServers() {
   for (const [name, conn] of connections) {
+    try { clearInterval(conn.pingTimer); } catch (_) {}
     try { conn.ws.close(); } catch (_) {}
     cleanupConnection(name);
   }
   connections.clear();
-  configs.clear();
   if (wss) {
     wss.close();
     wss = null;
@@ -166,12 +134,18 @@ function handleConnection(serverName, ws) {
   // Close previous connection if exists
   const existing = connections.get(serverName);
   if (existing) {
+    try { clearInterval(existing.pingTimer); } catch (_) {}
     try { existing.ws.close(); } catch (_) {}
     cleanupConnection(serverName);
   }
 
-  const conn = { ws, tools: [], rpcId: 0 };
+  const conn = { ws, tools: [], rpcId: 0, pingTimer: null };
   connections.set(serverName, conn);
+
+  // Start keepalive pings
+  conn.pingTimer = setInterval(() => {
+    try { ws.ping(); } catch (_) {}
+  }, PING_INTERVAL_MS);
 
   ws.on('message', (data) => {
     let msg;
@@ -188,8 +162,8 @@ function handleConnection(serverName, ws) {
   ws.on('close', () => {
     const current = connections.get(serverName);
     if (current && current.ws === ws) {
+      try { clearInterval(current.pingTimer); } catch (_) {}
       cleanupConnection(serverName);
-      // Notify loader that tools should be removed
       if (typeof onWsBridgeDisconnected === 'function') {
         onWsBridgeDisconnected(serverName);
       }
@@ -206,32 +180,23 @@ function handleConnection(serverName, ws) {
 
 async function sendHandshake(serverName, conn) {
   try {
-    // initialize
-    const initResult = await sendRpc(serverName, conn, 'initialize', {
+    await sendRpc(serverName, conn, 'initialize', {
       protocolVersion: '2025-03-26',
       capabilities: {},
       clientInfo: { name: 'mcp-center', version: '1.0.0' }
     });
 
-    // tools/list
     const toolsResult = await sendRpc(serverName, conn, 'tools/list');
+    conn.tools = toolsResult.tools || [];
 
-    const config = configs.get(serverName) || {};
-    const rawTools = toolsResult.tools || [];
-    const filteredTools = config.enabledTools && config.enabledTools.length > 0
-      ? rawTools.filter(t => config.enabledTools.includes(t.name))
-      : rawTools;
-
-    conn.tools = filteredTools;
-
-    // Notify loader that tools are ready
     if (typeof onWsBridgeConnected === 'function') {
-      onWsBridgeConnected(serverName, filteredTools);
+      onWsBridgeConnected(serverName, conn.tools);
     }
 
-    console.error(`[mcp-center] wsBridge "${serverName}" connected with ${filteredTools.length} tool(s)`);
+    console.error(`[mcp-center] wsBridge "${serverName}" connected with ${conn.tools.length} tool(s)`);
   } catch (e) {
     console.error(`[mcp-center] wsBridge "${serverName}" handshake failed:`, e.message);
+    try { clearInterval(conn.pingTimer); } catch (_) {}
     conn.ws.close();
   }
 }
@@ -301,11 +266,6 @@ function cleanupConnection(serverName) {
 let onWsBridgeConnected = null;
 let onWsBridgeDisconnected = null;
 
-/**
- * Set callbacks for loader to be notified when wsBridge clients connect/disconnect.
- * @param {Function} onConnect - (serverName, tools) => void
- * @param {Function} onDisconnect - (serverName) => void
- */
 export function setWsBridgeCallbacks(onConnect, onDisconnect) {
   onWsBridgeConnected = onConnect;
   onWsBridgeDisconnected = onDisconnect;

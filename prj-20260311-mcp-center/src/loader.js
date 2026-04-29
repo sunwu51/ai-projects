@@ -2,9 +2,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
-  registerWsBridgeConfig,
-  unregisterWsBridgeConfig,
-  isWsBridgeServer,
   callWsBridgeTool,
   getWsBridgeTools,
   setWsBridgeCallbacks
@@ -294,31 +291,6 @@ async function loadStdioServer(config) {
 }
 
 /**
- * Register a wsBridge server config (client will connect later).
- * @param {object} config
- * @returns {object}
- */
-async function loadWsBridgeServer(config) {
-  console.log(`[mcp-center] Registering wsBridge server "${config.name}" (waiting for client to connect...)`);
-  registerWsBridgeConfig(config);
-  serverStatus.set(config.name, { status: 'loading' });
-
-  // Return empty server entry — tools will be populated when client connects
-  const entry = {
-    name: config.name,
-    type: 'wsBridge',
-    tools: [],
-    resources: [],
-    resourceTemplates: [],
-    prompts: []
-  };
-  loadedServers.set(config.name, entry);
-  serverStatus.set(config.name, { status: 'connected' });
-
-  return entry;
-}
-
-/**
  * Called by wsBridge when a client connects and tools are discovered.
  * @param {string} serverName
  * @param {Array} rawTools
@@ -364,15 +336,13 @@ export function unregisterWsBridgeServer(serverName) {
  * @returns {Promise<object>}
  */
 export async function loadServer(config) {
-  const transportType = config.type === 'wsBridge' ? 'wsBridge' : (config.url ? 'http' : 'stdio');
+  const transportType = config.url ? 'http' : 'stdio';
   console.log(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
   serverStatus.set(config.name, { status: 'loading' });
 
   let loadedServer;
   try {
-    if (transportType === 'wsBridge') {
-      loadedServer = await loadWsBridgeServer(config);
-    } else if (transportType === 'http') {
+    if (transportType === 'http') {
       loadedServer = await loadHttpServer(config);
     } else {
       loadedServer = await loadStdioServer(config);
@@ -407,9 +377,7 @@ export async function reloadServer(config) {
   }
 
   if (existing) {
-    if (existing.type === 'wsBridge') {
-      unregisterWsBridgeConfig(config.name);
-    } else if (existing.client) {
+    if (existing.client) {
       try {
         await existing.client.close();
       } catch (error) {
@@ -567,9 +535,7 @@ export async function getPrompt(promptName, args) {
 export async function closeAllServers() {
   for (const [name, server] of loadedServers) {
     try {
-      if (server.type === 'wsBridge') {
-        unregisterWsBridgeConfig(name);
-      } else if (server.client) {
+      if (server.client) {
         await server.client.close();
       }
       console.log(`[mcp-center] Closed server "${name}"`);

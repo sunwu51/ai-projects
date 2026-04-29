@@ -29,7 +29,7 @@ import {
   getServerStatus,
 } from './loader.js';
 import { loadConfig, watchConfig, getConfig, ensureDefaultConfig, unwatchConfig, saveConfig } from './config.js';
-import { createWsServer, closeWsBridgeServers } from './wsBridge.js';
+import { createWsServer, closeWsBridgeServers, getWsBridgeServers } from './wsBridge.js';
 
 let reloadInFlight = null;
 let reloadQueued = false;
@@ -365,6 +365,13 @@ async function runHttp(port) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
       }
+      return;
+    }
+
+    // API: Get wsBridge servers (auto-registered, not in config)
+    if (url.pathname === '/api/wsbridge/servers' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getWsBridgeServers()));
       return;
     }
 

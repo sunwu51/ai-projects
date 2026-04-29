@@ -105,7 +105,6 @@ export const UI_HTML = `<!DOCTYPE html>
           <select id="serverType" onchange="toggleTypeFields()" required>
             <option value="http">HTTP</option>
             <option value="stdio">STDIO</option>
-            <option value="wsBridge">WebSocket Bridge</option>
           </select>
         </div>
         <div id="httpFields" class="type-fields active">
@@ -132,12 +131,6 @@ export const UI_HTML = `<!DOCTYPE html>
             <textarea id="serverEnv" placeholder='{"KEY": "value"}'></textarea>
           </div>
         </div>
-        <div id="wsBridgeFields" class="type-fields">
-          <p style="color:#666;font-size:13px;padding:6px 0">
-            WebSocket bridge — the client (e.g. Chrome extension) connects at <code>/ws/{name}</code>.
-            No URL or command is needed; the server listens for incoming WebSocket connections.
-          </p>
-        </div>
         <div class="form-group">
           <label>Enabled Tools</label>
           <div class="enabled-tools-row">
@@ -162,28 +155,28 @@ export const UI_HTML = `<!DOCTYPE html>
     let lastRenderedServersKey = '';
 
     async function loadServers() {
-      const [serversRes, statusRes] = await Promise.all([
+      const [serversRes, statusRes, wsBridgeRes] = await Promise.all([
         fetch('/api/servers'),
         fetch('/api/servers/status'),
+        fetch('/api/wsbridge/servers').catch(() => ({ json: () => [] }))
       ]);
       const servers = await serversRes.json();
       const statusMap = await statusRes.json();
+      const wsBridgeServers = await wsBridgeRes.json();
       const list = document.getElementById('serverList');
-      const serversKey = JSON.stringify(servers);
+      const serversKey = JSON.stringify(servers) + '|' + JSON.stringify(wsBridgeServers);
 
-      if (servers.length === 0) {
+      if (servers.length === 0 && wsBridgeServers.length === 0) {
         list.innerHTML = '<p style="color:#999;margin-top:20px">No servers configured. Click "+ Add Server" to get started.</p>';
         lastRenderedServersKey = '';
         return;
       }
 
       if (serversKey !== lastRenderedServersKey) {
-        list.innerHTML = servers.map((s, i) => {
-        const type = s.type === 'wsBridge' ? 'wsbridge' : (s.url ? 'http' : 'stdio');
+        const configHtml = servers.map((s, i) => {
+        const type = s.url ? 'http' : 'stdio';
         const maskObj = obj => JSON.stringify(Object.fromEntries(Object.keys(obj).map(k => [k, '******'])));
-        const details = type === 'wsbridge'
-          ? 'WebSocket bridge — client connects at /ws/' + escHtml(s.name)
-          : type === 'http'
+        const details = type === 'http'
           ? 'URL: ' + s.url + (s.httpHeaders && Object.keys(s.httpHeaders).length ? ' | Headers: ' + maskObj(s.httpHeaders) : '')
           : 'Command: ' + s.command + ' ' + (s.args || []).join(' ') + (s.env && Object.keys(s.env).length ? ' | Env: ' + maskObj(s.env) : '');
         const enabled = s.enabled !== false;
@@ -209,10 +202,30 @@ export const UI_HTML = `<!DOCTYPE html>
           '<div class="caps-section" id="' + capsId + '" style="display:none"></div>' +
         '</div>';
         }).join('');
+
+        // Render wsBridge servers (read-only, auto-registered)
+        const wsBridgeHtml = wsBridgeServers.map((ws) => {
+          const wsbId = 'wsb-caps-' + ws.name;
+          return '<div class="server-item" id="wsbridge-item-' + ws.name + '">' +
+            '<div class="server-header">' +
+              '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                '<span class="server-name">' + escHtml(ws.name) + '</span>' +
+                '<span class="server-type type-wsbridge">WSBRIDGE</span>' +
+                '<span id="wsbridge-status-' + ws.name + '"></span>' +
+              '</div>' +
+              '<div style="font-size:11px;color:#999">auto-registered · read-only</div>' +
+            '</div>' +
+            '<div class="server-details">WebSocket bridge — client connects at /ws/' + escHtml(ws.name) + '</div>' +
+            '<div class="caps-section" id="' + wsbId + '" style="display:none"></div>' +
+          '</div>';
+        }).join('');
+
+        list.innerHTML = configHtml + wsBridgeHtml;
         lastRenderedServersKey = serversKey;
       }
 
       const hasLoadingServers = updateServerStatuses(servers, statusMap);
+      updateWsBridgeStatuses(wsBridgeServers);
 
       if (listReloadTimer) {
         clearTimeout(listReloadTimer);
@@ -250,8 +263,7 @@ export const UI_HTML = `<!DOCTYPE html>
 
         if (!st || st.status === 'loading') {
           hasLoadingServers = true;
-          const loadingLabel = s.type === 'wsBridge' ? 'waiting for client...' : 'loading...';
-          statusEl.innerHTML = '<span class="status-badge status-loading">' + loadingLabel + '</span>';
+          statusEl.innerHTML = '<span class="status-badge status-loading">loading...</span>';
           errorEl.innerHTML = '';
           capsEl.style.display = 'none';
           capsEl.innerHTML = '';
@@ -279,6 +291,22 @@ export const UI_HTML = `<!DOCTYPE html>
       });
 
       return hasLoadingServers;
+    }
+
+    function updateWsBridgeStatuses(wsList) {
+      for (const ws of wsList) {
+        const statusEl = document.getElementById('wsbridge-status-' + ws.name);
+        const capsEl = document.getElementById('wsb-caps-' + ws.name);
+        if (!statusEl || !capsEl) continue;
+
+        statusEl.innerHTML = '<span class="status-badge status-connected">connected</span>';
+        capsEl.style.display = 'block';
+        if (!capsEl.dataset.loadedFor || capsEl.dataset.loadedFor !== ws.name) {
+          capsEl.dataset.loadedFor = ws.name;
+          capsEl.innerHTML = '<span style="font-size:12px;color:#999">Loading capabilities...</span>';
+          loadCaps(ws.name, 'wsb-caps-' + ws.name);
+        }
+      }
     }
 
     function setButtonLoading(btn, loading, originalText) {
@@ -355,7 +383,6 @@ export const UI_HTML = `<!DOCTYPE html>
 
     function buildProbeConfig() {
       const type = document.getElementById('serverType').value;
-      if (type === 'wsBridge') return null;
       const cfg = { name: '__probe__' };
       if (type === 'http') {
         cfg.url = document.getElementById('serverUrl').value;
@@ -377,10 +404,6 @@ export const UI_HTML = `<!DOCTYPE html>
       sec.style.display = 'block';
 
       const cfg = buildProbeConfig();
-      if (!cfg) {
-        content.innerHTML = '<div style="color:#999;font-size:13px">Probe is not available for WebSocket Bridge servers. Tools will appear automatically when the client connects.</div>';
-        return;
-      }
       content.innerHTML = '<div class="probe-loading">Connecting to server...</div>';
       try {
         const res = await fetch('/api/probe', {
@@ -492,7 +515,7 @@ export const UI_HTML = `<!DOCTYPE html>
 
       document.getElementById('modalTitle').textContent = 'Edit Server';
       document.getElementById('serverName').value = server.name;
-      document.getElementById('serverType').value = server.type === 'wsBridge' ? 'wsBridge' : (server.url ? 'http' : 'stdio');
+      document.getElementById('serverType').value = server.url ? 'http' : 'stdio';
 
       if (server.url) {
         document.getElementById('serverUrl').value = server.url;
@@ -538,7 +561,6 @@ export const UI_HTML = `<!DOCTYPE html>
         .split(',').map(t => t.trim()).filter(t => t);
 
       const server = { name };
-      if (type === 'wsBridge') server.type = 'wsBridge';
       if (enabledTools.length > 0) server.enabledTools = enabledTools;
 
       // Collect enabled resources/templates/prompts from probe checkboxes if visible
@@ -619,7 +641,6 @@ export const UI_HTML = `<!DOCTYPE html>
       const type = document.getElementById('serverType').value;
       document.getElementById('httpFields').classList.toggle('active', type === 'http');
       document.getElementById('stdioFields').classList.toggle('active', type === 'stdio');
-      document.getElementById('wsBridgeFields').classList.toggle('active', type === 'wsBridge');
     }
 
     loadServers();
