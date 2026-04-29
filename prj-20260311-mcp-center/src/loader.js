@@ -296,12 +296,7 @@ async function loadStdioServer(config) {
  * @param {Array} rawTools
  */
 export function registerConnectedWsBridge(serverName, rawTools) {
-  const config = loadedServers.get(serverName)?.config || {};
-  const filteredTools = config.enabledTools && config.enabledTools.length > 0
-    ? rawTools.filter(t => config.enabledTools.includes(t.name))
-    : rawTools;
-
-  const tools = filteredTools.map(tool => ({
+  const tools = rawTools.map(tool => ({
     name: makeToolName(serverName, tool.name),
     originalName: tool.name,
     serverName: serverName,
@@ -309,10 +304,15 @@ export function registerConnectedWsBridge(serverName, rawTools) {
     inputSchema: tool.inputSchema || tool.schema || {}
   }));
 
-  const entry = loadedServers.get(serverName);
-  if (entry) {
-    entry.tools = tools;
-  }
+  // Create or update the entry in loadedServers
+  loadedServers.set(serverName, {
+    name: serverName,
+    type: 'wsBridge',
+    tools,
+    resources: [],
+    resourceTemplates: [],
+    prompts: []
+  });
   serverStatus.set(serverName, { status: 'connected' });
   console.log(`[mcp-center] wsBridge "${serverName}" registered ${tools.length} tool(s)`);
 }
@@ -322,10 +322,7 @@ export function registerConnectedWsBridge(serverName, rawTools) {
  * @param {string} serverName
  */
 export function unregisterWsBridgeServer(serverName) {
-  const entry = loadedServers.get(serverName);
-  if (entry) {
-    entry.tools = [];
-  }
+  loadedServers.delete(serverName);
   serverStatus.set(serverName, { status: 'failed', error: 'WebSocket client disconnected' });
   console.log(`[mcp-center] wsBridge "${serverName}" disconnected`);
 }
