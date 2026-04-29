@@ -29,6 +29,10 @@ import {
   getServerStatus,
 } from './loader.js';
 import { loadConfig, watchConfig, getConfig, ensureDefaultConfig, unwatchConfig, saveConfig } from './config.js';
+import { createWsServer, closeWsBridgeServers } from './wsBridge.js';
+
+let reloadInFlight = null;
+let reloadQueued = false;
 
 /**
  * Create an MCP Server instance with tool handlers
@@ -167,6 +171,34 @@ async function reloadAllServers() {
   console.error('[mcp-center] Reload complete');
 }
 
+/**
+ * Serialize reloads and coalesce overlapping requests.
+ * @returns {Promise<void>}
+ */
+function scheduleReloadAllServers() {
+  if (reloadInFlight) {
+    reloadQueued = true;
+    return reloadInFlight;
+  }
+
+  reloadInFlight = (async () => {
+    do {
+      reloadQueued = false;
+      await reloadAllServers();
+    } while (reloadQueued);
+  })().finally(() => {
+    reloadInFlight = null;
+  });
+
+  return reloadInFlight;
+}
+
+function triggerReloadAllServers() {
+  scheduleReloadAllServers().catch((error) => {
+    console.error('[mcp-center] Background reload failed:', error);
+  });
+}
+
 
 /**
  * Run in HTTP mode with API and UI
@@ -253,9 +285,9 @@ async function runHttp(port) {
           const config = getConfig();
           config.servers.push(server);
           saveConfig(config);
-          await reloadAllServers();
-          res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true }));
+          triggerReloadAllServers();
+          res.writeHead(202, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, reloading: true }));
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: error.message }));
@@ -280,9 +312,9 @@ async function runHttp(port) {
           }
           config.servers[index] = server;
           saveConfig(config);
-          await reloadAllServers();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true }));
+          triggerReloadAllServers();
+          res.writeHead(202, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, reloading: true }));
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: error.message }));
@@ -293,36 +325,46 @@ async function runHttp(port) {
 
     // API: Toggle server enabled/disabled
     if (url.pathname.match(/^\/api\/servers\/\d+\/toggle$/) && req.method === 'PATCH') {
-      const index = parseInt(url.pathname.split('/')[3]);
-      const config = getConfig();
-      if (index < 0 || index >= config.servers.length) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Server not found' }));
-        return;
+      try {
+        const index = parseInt(url.pathname.split('/')[3]);
+        const config = getConfig();
+        if (index < 0 || index >= config.servers.length) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Server not found' }));
+          return;
+        }
+        // Toggle: if enabled is undefined or true, set to false; otherwise set to true
+        config.servers[index].enabled = config.servers[index].enabled === false ? true : false;
+        saveConfig(config);
+        triggerReloadAllServers();
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, enabled: config.servers[index].enabled, reloading: true }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
       }
-      // Toggle: if enabled is undefined or true, set to false; otherwise set to true
-      config.servers[index].enabled = config.servers[index].enabled === false ? true : false;
-      saveConfig(config);
-      await reloadAllServers();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, enabled: config.servers[index].enabled }));
       return;
     }
 
     // API: Delete server
     if (url.pathname.startsWith('/api/servers/') && req.method === 'DELETE') {
-      const index = parseInt(url.pathname.split('/')[3]);
-      const config = getConfig();
-      if (index < 0 || index >= config.servers.length) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Server not found' }));
-        return;
+      try {
+        const index = parseInt(url.pathname.split('/')[3]);
+        const config = getConfig();
+        if (index < 0 || index >= config.servers.length) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Server not found' }));
+          return;
+        }
+        config.servers.splice(index, 1);
+        saveConfig(config);
+        triggerReloadAllServers();
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, reloading: true }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
       }
-      config.servers.splice(index, 1);
-      saveConfig(config);
-      await reloadAllServers();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
       return;
     }
 
@@ -365,9 +407,13 @@ async function runHttp(port) {
     httpServer.on('error', reject);
   });
 
+  createWsServer(httpServer);
+  console.error(`[mcp-center] WebSocket bridge listening at ws://localhost:${port}/ws/:serverName`);
+
   const shutdown = async () => {
     console.error('[mcp-center] Shutting down...');
     unwatchConfig();
+    closeWsBridgeServers();
     await closeAllServers();
     httpServer.close(() => process.exit(0));
   };
@@ -392,7 +438,9 @@ export async function runServer(configPath) {
 
   await loadAllServers(config.servers);
 
-  watchConfig(reloadAllServers);
+  watchConfig(() => {
+    triggerReloadAllServers();
+  });
 
   console.error('[mcp-center] Starting MCP Center server (HTTP transport)...');
 

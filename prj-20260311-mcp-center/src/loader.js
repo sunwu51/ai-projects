@@ -1,9 +1,26 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {
+  registerWsBridgeConfig,
+  unregisterWsBridgeConfig,
+  isWsBridgeServer,
+  callWsBridgeTool,
+  getWsBridgeTools,
+  setWsBridgeCallbacks
+} from './wsBridge.js';
 
 /** @type {Map<string, {name: string, client: Client, tools: Array, resources: Array, resourceTemplates: Array, prompts: Array, config: object}>} */
 const loadedServers = new Map();
+
+/**
+ * Clone a server config so later in-place mutations do not affect reload diffing.
+ * @param {object} config
+ * @returns {object}
+ */
+function cloneServerConfig(config) {
+  return JSON.parse(JSON.stringify(config));
+}
 
 /**
  * Deep-compare two server configs to determine if reconnection is needed
@@ -15,7 +32,7 @@ function serverConfigChanged(a, b) {
   return JSON.stringify(a) !== JSON.stringify(b);
 }
 
-/** @type {Map<string, {status: 'connected'|'failed', error?: string}>} */
+/** @type {Map<string, {status: 'loading'|'connected'|'failed'|'disabled', error?: string}>} */
 const serverStatus = new Map();
 
 /**
@@ -120,6 +137,87 @@ function filterPrompts(prompts, enabledPrompts) {
 }
 
 /**
+ * Load all supported server capabilities in parallel
+ * @param {Client} client
+ * @param {object} config
+ * @returns {Promise<{tools: Array, resources: Array, resourceTemplates: Array, prompts: Array}>}
+ */
+async function loadServerCapabilities(client, config) {
+  const [toolsResponse, resourcesResponse, resourceTemplatesResponse, promptsResponse] = await Promise.allSettled([
+    client.listTools(),
+    client.listResources(),
+    client.listResourceTemplates(),
+    client.listPrompts(),
+  ]);
+
+  if (toolsResponse.status !== 'fulfilled') {
+    throw toolsResponse.reason;
+  }
+
+  const rawTools = toolsResponse.value.tools || [];
+  const filteredTools = filterTools(rawTools, config.enabledTools);
+  const tools = filteredTools.map(tool => ({
+    name: makeToolName(config.name, tool.name),
+    originalName: tool.name,
+    serverName: config.name,
+    description: tool.description || '',
+    inputSchema: tool.inputSchema || {},
+  }));
+
+  let resources = [];
+  if (resourcesResponse.status === 'fulfilled') {
+    const rawResources = resourcesResponse.value.resources || [];
+    const filteredResources = filterResources(rawResources, config.enabledResources);
+
+    resources = filteredResources.map(resource => ({
+      uri: makeResourceUri(config.name, resource.uri),
+      originalUri: resource.uri,
+      serverName: config.name,
+      name: resource.name || '',
+      description: resource.description || '',
+      mimeType: resource.mimeType,
+    }));
+  } else {
+    console.warn(`[mcp-center] Server ${config.name} does not support resources:`, resourcesResponse.reason?.message || String(resourcesResponse.reason));
+  }
+
+  let resourceTemplates = [];
+  if (resourceTemplatesResponse.status === 'fulfilled') {
+    const rawResourceTemplates = resourceTemplatesResponse.value.resourceTemplates || [];
+    const filteredResourceTemplates = filterResourceTemplates(rawResourceTemplates, config.enabledResourceTemplates);
+
+    resourceTemplates = filteredResourceTemplates.map(rt => ({
+      uriTemplate: makeResourceTemplateUri(config.name, rt.uriTemplate),
+      originalUriTemplate: rt.uriTemplate,
+      serverName: config.name,
+      name: rt.name || '',
+      description: rt.description || '',
+      mimeType: rt.mimeType,
+    }));
+  } else {
+    console.warn(`[mcp-center] Server ${config.name} does not support resource templates:`, resourceTemplatesResponse.reason?.message || String(resourceTemplatesResponse.reason));
+  }
+
+  let prompts = [];
+  if (promptsResponse.status === 'fulfilled') {
+    const rawPrompts = promptsResponse.value.prompts || [];
+    const filteredPrompts = filterPrompts(rawPrompts, config.enabledPrompts);
+
+    prompts = filteredPrompts.map(prompt => ({
+      name: makePromptName(config.name, prompt.name),
+      originalName: prompt.name,
+      serverName: config.name,
+      description: prompt.description || '',
+      arguments: prompt.arguments || [],
+    }));
+  } else {
+    console.warn(`[mcp-center] Server ${config.name} does not support prompts:`, promptsResponse.reason?.message || String(promptsResponse.reason));
+  }
+
+  return { tools, resources, resourceTemplates, prompts };
+}
+
+/**
  * Load all servers from config in parallel
  * @param {Array} servers
  * @returns {Promise<void>}
@@ -163,75 +261,7 @@ async function loadHttpServer(config) {
   );
 
   await client.connect(transport);
-
-  // Load tools
-  const toolsResponse = await client.listTools();
-  const rawTools = toolsResponse.tools || [];
-  const filteredRaw = filterTools(rawTools, config.enabledTools);
-
-  const tools = filteredRaw.map(tool => ({
-    name: makeToolName(config.name, tool.name),
-    originalName: tool.name,
-    serverName: config.name,
-    description: tool.description || '',
-    inputSchema: tool.inputSchema || {},
-  }));
-
-  // Load resources
-  let resources = [];
-  try {
-    const resourcesResponse = await client.listResources();
-    const rawResources = resourcesResponse.resources || [];
-    const filteredResources = filterResources(rawResources, config.enabledResources);
-
-    resources = filteredResources.map(resource => ({
-      uri: makeResourceUri(config.name, resource.uri),
-      originalUri: resource.uri,
-      serverName: config.name,
-      name: resource.name || '',
-      description: resource.description || '',
-      mimeType: resource.mimeType,
-    }));
-  } catch (error) {
-    console.warn(`[mcp-center] Server ${config.name} does not support resources:`, error.message);
-  }
-
-  // Load resource templates
-  let resourceTemplates = [];
-  try {
-    const resourceTemplatesResponse = await client.listResourceTemplates();
-    const rawResourceTemplates = resourceTemplatesResponse.resourceTemplates || [];
-    const filteredResourceTemplates = filterResourceTemplates(rawResourceTemplates, config.enabledResourceTemplates);
-
-    resourceTemplates = filteredResourceTemplates.map(rt => ({
-      uriTemplate: makeResourceTemplateUri(config.name, rt.uriTemplate),
-      originalUriTemplate: rt.uriTemplate,
-      serverName: config.name,
-      name: rt.name || '',
-      description: rt.description || '',
-      mimeType: rt.mimeType,
-    }));
-  } catch (error) {
-    console.warn(`[mcp-center] Server ${config.name} does not support resource templates:`, error.message);
-  }
-
-  // Load prompts
-  let prompts = [];
-  try {
-    const promptsResponse = await client.listPrompts();
-    const rawPrompts = promptsResponse.prompts || [];
-    const filteredPrompts = filterPrompts(rawPrompts, config.enabledPrompts);
-
-    prompts = filteredPrompts.map(prompt => ({
-      name: makePromptName(config.name, prompt.name),
-      originalName: prompt.name,
-      serverName: config.name,
-      description: prompt.description || '',
-      arguments: prompt.arguments || [],
-    }));
-  } catch (error) {
-    console.warn(`[mcp-center] Server ${config.name} does not support prompts:`, error.message);
-  }
+  const { tools, resources, resourceTemplates, prompts } = await loadServerCapabilities(client, config);
 
   return { name: config.name, client, tools, resources, resourceTemplates, prompts };
 }
@@ -258,77 +288,74 @@ async function loadStdioServer(config) {
   );
 
   await client.connect(transport);
-
-  // Load tools
-  const toolsResponse = await client.listTools();
-  const rawTools = toolsResponse.tools || [];
-  const filteredRaw = filterTools(rawTools, config.enabledTools);
-
-  const tools = filteredRaw.map(tool => ({
-    name: makeToolName(config.name, tool.name),
-    originalName: tool.name,
-    serverName: config.name,
-    description: tool.description || '',
-    inputSchema: tool.inputSchema || {},
-  }));
-
-  // Load resources
-  let resources = [];
-  try {
-    const resourcesResponse = await client.listResources();
-    const rawResources = resourcesResponse.resources || [];
-    const filteredResources = filterResources(rawResources, config.enabledResources);
-
-    resources = filteredResources.map(resource => ({
-      uri: makeResourceUri(config.name, resource.uri),
-      originalUri: resource.uri,
-      serverName: config.name,
-      name: resource.name || '',
-      description: resource.description || '',
-      mimeType: resource.mimeType,
-    }));
-  } catch (error) {
-    console.warn(`[mcp-center] Server ${config.name} does not support resources:`, error.message);
-  }
-
-  // Load resource templates
-  let resourceTemplates = [];
-  try {
-    const resourceTemplatesResponse = await client.listResourceTemplates();
-    const rawResourceTemplates = resourceTemplatesResponse.resourceTemplates || [];
-    const filteredResourceTemplates = filterResourceTemplates(rawResourceTemplates, config.enabledResourceTemplates);
-
-    resourceTemplates = filteredResourceTemplates.map(rt => ({
-      uriTemplate: makeResourceTemplateUri(config.name, rt.uriTemplate),
-      originalUriTemplate: rt.uriTemplate,
-      serverName: config.name,
-      name: rt.name || '',
-      description: rt.description || '',
-      mimeType: rt.mimeType,
-    }));
-  } catch (error) {
-    console.warn(`[mcp-center] Server ${config.name} does not support resource templates:`, error.message);
-  }
-
-  // Load prompts
-  let prompts = [];
-  try {
-    const promptsResponse = await client.listPrompts();
-    const rawPrompts = promptsResponse.prompts || [];
-    const filteredPrompts = filterPrompts(rawPrompts, config.enabledPrompts);
-
-    prompts = filteredPrompts.map(prompt => ({
-      name: makePromptName(config.name, prompt.name),
-      originalName: prompt.name,
-      serverName: config.name,
-      description: prompt.description || '',
-      arguments: prompt.arguments || [],
-    }));
-  } catch (error) {
-    console.warn(`[mcp-center] Server ${config.name} does not support prompts:`, error.message);
-  }
+  const { tools, resources, resourceTemplates, prompts } = await loadServerCapabilities(client, config);
 
   return { name: config.name, client, tools, resources, resourceTemplates, prompts };
+}
+
+/**
+ * Register a wsBridge server config (client will connect later).
+ * @param {object} config
+ * @returns {object}
+ */
+async function loadWsBridgeServer(config) {
+  console.log(`[mcp-center] Registering wsBridge server "${config.name}" (waiting for client to connect...)`);
+  registerWsBridgeConfig(config);
+  serverStatus.set(config.name, { status: 'loading' });
+
+  // Return empty server entry — tools will be populated when client connects
+  const entry = {
+    name: config.name,
+    type: 'wsBridge',
+    tools: [],
+    resources: [],
+    resourceTemplates: [],
+    prompts: []
+  };
+  loadedServers.set(config.name, entry);
+  serverStatus.set(config.name, { status: 'connected' });
+
+  return entry;
+}
+
+/**
+ * Called by wsBridge when a client connects and tools are discovered.
+ * @param {string} serverName
+ * @param {Array} rawTools
+ */
+export function registerConnectedWsBridge(serverName, rawTools) {
+  const config = loadedServers.get(serverName)?.config || {};
+  const filteredTools = config.enabledTools && config.enabledTools.length > 0
+    ? rawTools.filter(t => config.enabledTools.includes(t.name))
+    : rawTools;
+
+  const tools = filteredTools.map(tool => ({
+    name: makeToolName(serverName, tool.name),
+    originalName: tool.name,
+    serverName: serverName,
+    description: tool.description || '',
+    inputSchema: tool.inputSchema || tool.schema || {}
+  }));
+
+  const entry = loadedServers.get(serverName);
+  if (entry) {
+    entry.tools = tools;
+  }
+  serverStatus.set(serverName, { status: 'connected' });
+  console.log(`[mcp-center] wsBridge "${serverName}" registered ${tools.length} tool(s)`);
+}
+
+/**
+ * Called by wsBridge when a client disconnects.
+ * @param {string} serverName
+ */
+export function unregisterWsBridgeServer(serverName) {
+  const entry = loadedServers.get(serverName);
+  if (entry) {
+    entry.tools = [];
+  }
+  serverStatus.set(serverName, { status: 'failed', error: 'WebSocket client disconnected' });
+  console.log(`[mcp-center] wsBridge "${serverName}" disconnected`);
 }
 
 /**
@@ -337,12 +364,15 @@ async function loadStdioServer(config) {
  * @returns {Promise<object>}
  */
 export async function loadServer(config) {
-  const transportType = config.url ? 'http' : 'stdio';
+  const transportType = config.type === 'wsBridge' ? 'wsBridge' : (config.url ? 'http' : 'stdio');
   console.log(`[mcp-center] Loading server "${config.name}" (${transportType} transport)`);
+  serverStatus.set(config.name, { status: 'loading' });
 
   let loadedServer;
   try {
-    if (transportType === 'http') {
+    if (transportType === 'wsBridge') {
+      loadedServer = await loadWsBridgeServer(config);
+    } else if (transportType === 'http') {
       loadedServer = await loadHttpServer(config);
     } else {
       loadedServer = await loadStdioServer(config);
@@ -355,7 +385,7 @@ export async function loadServer(config) {
   }
 
   console.log(`[mcp-center] Loaded ${loadedServer.tools.length} tool(s), ${loadedServer.resources.length} resource(s), ${loadedServer.resourceTemplates.length} resource template(s), ${loadedServer.prompts.length} prompt(s) from "${config.name}"`);
-  loadedServer.config = config;
+  loadedServer.config = cloneServerConfig(config);
   loadedServers.set(config.name, loadedServer);
   serverStatus.set(config.name, { status: 'connected' });
 
@@ -377,10 +407,14 @@ export async function reloadServer(config) {
   }
 
   if (existing) {
-    try {
-      await existing.client.close();
-    } catch (error) {
-      console.warn(`[mcp-center] Error closing server ${config.name}:`, error);
+    if (existing.type === 'wsBridge') {
+      unregisterWsBridgeConfig(config.name);
+    } else if (existing.client) {
+      try {
+        await existing.client.close();
+      } catch (error) {
+        console.warn(`[mcp-center] Error closing server ${config.name}:`, error);
+      }
     }
     loadedServers.delete(config.name);
   }
@@ -455,6 +489,10 @@ export async function callTool(toolName, args) {
   for (const server of loadedServers.values()) {
     const tool = server.tools.find(t => t.name === toolName);
     if (tool) {
+      if (server.type === 'wsBridge') {
+        const result = await callWsBridgeTool(tool.serverName, tool.originalName, args);
+        return result;
+      }
       const result = await server.client.callTool({
         name: tool.originalName,
         arguments: args,
@@ -529,7 +567,11 @@ export async function getPrompt(promptName, args) {
 export async function closeAllServers() {
   for (const [name, server] of loadedServers) {
     try {
-      await server.client.close();
+      if (server.type === 'wsBridge') {
+        unregisterWsBridgeConfig(name);
+      } else if (server.client) {
+        await server.client.close();
+      }
       console.log(`[mcp-center] Closed server "${name}"`);
     } catch (error) {
       console.warn(`[mcp-center] Error closing server "${name}":`, error);
@@ -603,3 +645,10 @@ export async function probeServer(config) {
     }
   }
 }
+
+// Wire wsBridge callbacks — called by wsBridge.js when clients connect/disconnect.
+// Uses indirect references so wsBridge.js doesn't import loader.js.
+setWsBridgeCallbacks(
+  (serverName, tools) => { registerConnectedWsBridge(serverName, tools); },
+  (serverName) => { unregisterWsBridgeServer(serverName); }
+);

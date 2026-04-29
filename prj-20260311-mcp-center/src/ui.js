@@ -39,6 +39,7 @@ export const UI_HTML = `<!DOCTYPE html>
     .server-type { display: inline-block; padding: 3px 7px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
     .type-http { background: #d1ecf1; color: #0c5460; }
     .type-stdio { background: #d4edda; color: #155724; }
+    .type-wsbridge { background: #e8e0f3; color: #4a1a8a; }
     .status-badge { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
     .status-connected { background: #d4edda; color: #155724; }
     .status-failed { background: #f8d7da; color: #721c24; }
@@ -104,6 +105,7 @@ export const UI_HTML = `<!DOCTYPE html>
           <select id="serverType" onchange="toggleTypeFields()" required>
             <option value="http">HTTP</option>
             <option value="stdio">STDIO</option>
+            <option value="wsBridge">WebSocket Bridge</option>
           </select>
         </div>
         <div id="httpFields" class="type-fields active">
@@ -130,6 +132,12 @@ export const UI_HTML = `<!DOCTYPE html>
             <textarea id="serverEnv" placeholder='{"KEY": "value"}'></textarea>
           </div>
         </div>
+        <div id="wsBridgeFields" class="type-fields">
+          <p style="color:#666;font-size:13px;padding:6px 0">
+            WebSocket bridge — the client (e.g. Chrome extension) connects at <code>/ws/{name}</code>.
+            No URL or command is needed; the server listens for incoming WebSocket connections.
+          </p>
+        </div>
         <div class="form-group">
           <label>Enabled Tools</label>
           <div class="enabled-tools-row">
@@ -141,8 +149,8 @@ export const UI_HTML = `<!DOCTYPE html>
           <div id="probeContent"></div>
         </div>
         <div class="btn-group" style="margin-top:16px">
-          <button type="submit" class="btn btn-success">Save</button>
-          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-success" id="saveBtn">Save</button>
+          <button type="button" class="btn btn-secondary" id="cancelBtn" onclick="closeModal()">Cancel</button>
         </div>
       </form>
     </div>
@@ -150,6 +158,8 @@ export const UI_HTML = `<!DOCTYPE html>
 
   <script>
     let editingIndex = -1;
+    let listReloadTimer = null;
+    let lastRenderedServersKey = '';
 
     async function loadServers() {
       const [serversRes, statusRes] = await Promise.all([
@@ -159,40 +169,31 @@ export const UI_HTML = `<!DOCTYPE html>
       const servers = await serversRes.json();
       const statusMap = await statusRes.json();
       const list = document.getElementById('serverList');
+      const serversKey = JSON.stringify(servers);
 
       if (servers.length === 0) {
         list.innerHTML = '<p style="color:#999;margin-top:20px">No servers configured. Click "+ Add Server" to get started.</p>';
+        lastRenderedServersKey = '';
         return;
       }
 
-      list.innerHTML = servers.map((s, i) => {
-        const type = s.url ? 'http' : 'stdio';
+      if (serversKey !== lastRenderedServersKey) {
+        list.innerHTML = servers.map((s, i) => {
+        const type = s.type === 'wsBridge' ? 'wsbridge' : (s.url ? 'http' : 'stdio');
         const maskObj = obj => JSON.stringify(Object.fromEntries(Object.keys(obj).map(k => [k, '******'])));
-        const details = type === 'http'
+        const details = type === 'wsbridge'
+          ? 'WebSocket bridge — client connects at /ws/' + escHtml(s.name)
+          : type === 'http'
           ? 'URL: ' + s.url + (s.httpHeaders && Object.keys(s.httpHeaders).length ? ' | Headers: ' + maskObj(s.httpHeaders) : '')
           : 'Command: ' + s.command + ' ' + (s.args || []).join(' ') + (s.env && Object.keys(s.env).length ? ' | Env: ' + maskObj(s.env) : '');
         const enabled = s.enabled !== false;
-        const st = statusMap[s.name];
-        let statusHtml = '';
-        if (!enabled) {
-          statusHtml = '<span class="status-badge" style="background:#e2e3e5;color:#6c757d">disabled</span>';
-        } else if (st) {
-          statusHtml = st.status === 'connected'
-            ? '<span class="status-badge status-connected">connected</span>'
-            : '<span class="status-badge status-failed">failed</span>';
-        } else {
-          statusHtml = '<span class="status-badge status-loading">loading...</span>';
-        }
-        const errorHtml = enabled && st && st.status === 'failed' && st.error
-          ? '<div class="error-msg">Error: ' + escHtml(st.error) + '</div>'
-          : '';
         const capsId = 'caps-' + i;
         return '<div class="server-item' + (enabled ? '' : ' disabled-server') + '" id="server-item-' + i + '">' +
           '<div class="server-header">' +
             '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
               '<span class="server-name">' + escHtml(s.name) + '</span>' +
               '<span class="server-type type-' + type + '">' + type.toUpperCase() + '</span>' +
-              statusHtml +
+              '<span id="status-' + i + '"></span>' +
             '</div>' +
             '<div class="btn-group" style="align-items:center">' +
               '<div class="toggle-wrap" title="' + (enabled ? 'Click to disable' : 'Click to enable') + '">' +
@@ -204,20 +205,80 @@ export const UI_HTML = `<!DOCTYPE html>
           '</div>' +
           '<div class="server-details">' + escHtml(details) + '</div>' +
           (s.enabledTools ? '<div class="server-details">Enabled Tools: ' + escHtml(s.enabledTools.join(', ')) + '</div>' : '') +
-          errorHtml +
-          (enabled && st && st.status === 'connected'
-            ? '<div class="caps-section" id="' + capsId + '"><span style="font-size:12px;color:#999">Loading capabilities...</span></div>'
-            : '') +
+          '<div id="error-' + i + '"></div>' +
+          '<div class="caps-section" id="' + capsId + '" style="display:none"></div>' +
         '</div>';
-      }).join('');
+        }).join('');
+        lastRenderedServersKey = serversKey;
+      }
 
-      // Load capabilities for connected servers
+      const hasLoadingServers = updateServerStatuses(servers, statusMap);
+
+      if (listReloadTimer) {
+        clearTimeout(listReloadTimer);
+        listReloadTimer = null;
+      }
+      if (hasLoadingServers) {
+        listReloadTimer = setTimeout(() => {
+          loadServers().catch(() => {});
+        }, 1500);
+      }
+
+    }
+
+    function updateServerStatuses(servers, statusMap) {
+      let hasLoadingServers = false;
+
       servers.forEach((s, i) => {
+        const enabled = s.enabled !== false;
         const st = statusMap[s.name];
-        if (s.enabled !== false && st && st.status === 'connected') {
+        const itemEl = document.getElementById('server-item-' + i);
+        const statusEl = document.getElementById('status-' + i);
+        const errorEl = document.getElementById('error-' + i);
+        const capsEl = document.getElementById('caps-' + i);
+        if (!itemEl || !statusEl || !errorEl || !capsEl) return;
+
+        itemEl.classList.toggle('disabled-server', !enabled);
+
+        if (!enabled) {
+          statusEl.innerHTML = '<span class="status-badge" style="background:#e2e3e5;color:#6c757d">disabled</span>';
+          errorEl.innerHTML = '';
+          capsEl.style.display = 'none';
+          capsEl.innerHTML = '';
+          return;
+        }
+
+        if (!st || st.status === 'loading') {
+          hasLoadingServers = true;
+          const loadingLabel = s.type === 'wsBridge' ? 'waiting for client...' : 'loading...';
+          statusEl.innerHTML = '<span class="status-badge status-loading">' + loadingLabel + '</span>';
+          errorEl.innerHTML = '';
+          capsEl.style.display = 'none';
+          capsEl.innerHTML = '';
+          return;
+        }
+
+        if (st.status === 'failed') {
+          statusEl.innerHTML = '<span class="status-badge status-failed">failed</span>';
+          errorEl.innerHTML = st.error
+            ? '<div class="error-msg">Error: ' + escHtml(st.error) + '</div>'
+            : '';
+          capsEl.style.display = 'none';
+          capsEl.innerHTML = '';
+          return;
+        }
+
+        statusEl.innerHTML = '<span class="status-badge status-connected">connected</span>';
+        errorEl.innerHTML = '';
+        capsEl.style.display = 'block';
+        if (!capsEl.dataset.loadedFor || capsEl.dataset.loadedFor !== s.name) {
+          capsEl.dataset.loadedFor = s.name;
+          capsEl.innerHTML = '<span style="font-size:12px;color:#999">Loading capabilities...</span>';
           loadCaps(s.name, 'caps-' + i);
         }
       });
+
+      return hasLoadingServers;
     }
 
     function setButtonLoading(btn, loading, originalText) {
@@ -229,6 +290,12 @@ export const UI_HTML = `<!DOCTYPE html>
         btn.disabled = false;
         btn.innerHTML = btn.dataset.originalText || originalText;
       }
+    }
+
+    function resetSaveButton() {
+      const saveBtn = document.getElementById('saveBtn');
+      setButtonLoading(saveBtn, false, 'Save');
+      saveBtn.disabled = false;
     }
 
     async function toggleServer(index, checkbox) {
@@ -288,6 +355,7 @@ export const UI_HTML = `<!DOCTYPE html>
 
     function buildProbeConfig() {
       const type = document.getElementById('serverType').value;
+      if (type === 'wsBridge') return null;
       const cfg = { name: '__probe__' };
       if (type === 'http') {
         cfg.url = document.getElementById('serverUrl').value;
@@ -307,9 +375,13 @@ export const UI_HTML = `<!DOCTYPE html>
       const sec = document.getElementById('probeSection');
       const content = document.getElementById('probeContent');
       sec.style.display = 'block';
-      content.innerHTML = '<div class="probe-loading">Connecting to server...</div>';
 
       const cfg = buildProbeConfig();
+      if (!cfg) {
+        content.innerHTML = '<div style="color:#999;font-size:13px">Probe is not available for WebSocket Bridge servers. Tools will appear automatically when the client connects.</div>';
+        return;
+      }
+      content.innerHTML = '<div class="probe-loading">Connecting to server...</div>';
       try {
         const res = await fetch('/api/probe', {
           method: 'POST',
@@ -407,6 +479,7 @@ export const UI_HTML = `<!DOCTYPE html>
       document.getElementById('serverForm').reset();
       document.getElementById('probeSection').style.display = 'none';
       document.getElementById('probeContent').innerHTML = '';
+      resetSaveButton();
       document.getElementById('modal').style.display = 'block';
       toggleTypeFields();
     }
@@ -419,7 +492,7 @@ export const UI_HTML = `<!DOCTYPE html>
 
       document.getElementById('modalTitle').textContent = 'Edit Server';
       document.getElementById('serverName').value = server.name;
-      document.getElementById('serverType').value = server.url ? 'http' : 'stdio';
+      document.getElementById('serverType').value = server.type === 'wsBridge' ? 'wsBridge' : (server.url ? 'http' : 'stdio');
 
       if (server.url) {
         document.getElementById('serverUrl').value = server.url;
@@ -433,6 +506,7 @@ export const UI_HTML = `<!DOCTYPE html>
       document.getElementById('enabledTools').value = server.enabledTools ? server.enabledTools.join(', ') : '';
       document.getElementById('probeSection').style.display = 'none';
       document.getElementById('probeContent').innerHTML = '';
+      resetSaveButton();
       document.getElementById('modal').style.display = 'block';
       toggleTypeFields();
     }
@@ -464,6 +538,7 @@ export const UI_HTML = `<!DOCTYPE html>
         .split(',').map(t => t.trim()).filter(t => t);
 
       const server = { name };
+      if (type === 'wsBridge') server.type = 'wsBridge';
       if (enabledTools.length > 0) server.enabledTools = enabledTools;
 
       // Collect enabled resources/templates/prompts from probe checkboxes if visible
@@ -510,7 +585,7 @@ export const UI_HTML = `<!DOCTYPE html>
       const method = editingIndex >= 0 ? 'PUT' : 'POST';
       const url = editingIndex >= 0 ? '/api/servers/' + editingIndex : '/api/servers';
 
-      const saveBtn = document.querySelector('#serverForm .btn-success');
+      const saveBtn = document.getElementById('saveBtn');
       setButtonLoading(saveBtn, true, 'Saving...');
       saveBtn.disabled = true;
 
@@ -523,19 +598,20 @@ export const UI_HTML = `<!DOCTYPE html>
         if (!res.ok) {
           const data = await res.json();
           alert('Error: ' + (data.error || 'Unknown error'));
-          setButtonLoading(saveBtn, false, 'Save');
+          resetSaveButton();
           return;
         }
-        setButtonLoading(saveBtn, false, 'Save');
+        resetSaveButton();
         closeModal();
         await loadServers();
       } catch(e) {
         alert('Error: ' + e.message);
-        setButtonLoading(saveBtn, false, 'Save');
+        resetSaveButton();
       }
     }
 
     function closeModal() {
+      resetSaveButton();
       document.getElementById('modal').style.display = 'none';
     }
 
@@ -543,6 +619,7 @@ export const UI_HTML = `<!DOCTYPE html>
       const type = document.getElementById('serverType').value;
       document.getElementById('httpFields').classList.toggle('active', type === 'http');
       document.getElementById('stdioFields').classList.toggle('active', type === 'stdio');
+      document.getElementById('wsBridgeFields').classList.toggle('active', type === 'wsBridge');
     }
 
     loadServers();
