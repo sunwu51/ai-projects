@@ -10,7 +10,7 @@ import { randomUUID } from 'crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { loadServer, reloadServer, getServerStatus, closeAllServers } from '../src/loader.js';
+import { loadServer, reloadServer, getAllTools, getServerStatus, closeAllServers } from '../src/loader.js';
 
 const AUTH_TOKEN = 'test-secret-token';
 const AUTH_SERVER_PORT = 3201;
@@ -147,5 +147,29 @@ describe('Bug 3: server status tracking', () => {
     expect(statusMap.get('http-with-auth').status).toBe('connected');
     expect(statusMap.get('stdio-no-env').status).toBe('failed');
     expect(statusMap.get('stdio-with-env').status).toBe('connected');
+  });
+});
+
+describe('Bug 4: in-place config mutation should still trigger reload', () => {
+  afterAll(async () => {
+    await closeAllServers();
+  });
+
+  test('disabling an already loaded server removes its tools immediately', async () => {
+    const config = {
+      name: 'toggle-test',
+      command: 'node',
+      args: ['tests/test-mcp-server.js'],
+    };
+
+    await loadServer(config);
+    expect(getAllTools().some(tool => tool.name === 'toggle-test_echo')).toBe(true);
+    expect(getServerStatus().get('toggle-test').status).toBe('connected');
+
+    config.enabled = false;
+    await reloadServer(config);
+
+    expect(getAllTools().some(tool => tool.name === 'toggle-test_echo')).toBe(false);
+    expect(getServerStatus().get('toggle-test').status).toBe('disabled');
   });
 });

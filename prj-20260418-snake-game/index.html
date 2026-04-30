@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>贪吃虫</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: #eee;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 16px;
+      color: #4ecca3;
+      letter-spacing: 4px;
+    }
+
+    #scoreboard {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 16px;
+      font-size: 1rem;
+    }
+
+    #scoreboard span { color: #4ecca3; font-weight: bold; font-size: 1.2rem; }
+
+    #canvas {
+      border: 2px solid #4ecca3;
+      border-radius: 4px;
+      box-shadow: 0 0 20px rgba(78, 204, 163, 0.3);
+    }
+
+    #message {
+      margin-top: 20px;
+      font-size: 1.1rem;
+      color: #f5a623;
+      min-height: 28px;
+    }
+
+    #controls {
+      margin-top: 16px;
+      display: flex;
+      gap: 12px;
+    }
+
+    button {
+      padding: 8px 24px;
+      background: #4ecca3;
+      color: #1a1a2e;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover { background: #38b28a; }
+
+    #hint {
+      margin-top: 12px;
+      font-size: 0.8rem;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <h1>贪吃虫</h1>
+  <div id="scoreboard">
+    <div>得分: <span id="score">0</span></div>
+    <div>最高分: <span id="best">0</span></div>
+    <div>速度: <span id="level">1</span></div>
+  </div>
+  <canvas id="canvas" width="400" height="400"></canvas>
+  <div id="message">按空格键或点击开始游戏</div>
+  <div id="controls">
+    <button id="startBtn">开始</button>
+    <button id="pauseBtn">暂停</button>
+  </div>
+  <div id="hint">方向键 / WASD 控制方向 &nbsp;|&nbsp; 空格键 暂停/继续</div>
+
+  <script src="game.js"></script>
+</body>
+</html>

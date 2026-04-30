@@ -5,6 +5,7 @@ import { homedir } from 'os';
 let currentConfig = null;
 let configPath = '';
 let reloadCallback = null;
+let ignoredWatchEvents = 0;
 
 /**
  * Validates server config object
@@ -81,6 +82,10 @@ export function watchConfig(callback) {
   reloadCallback = callback;
 
   watchFile(configPath, { interval: 1000 }, () => {
+    if (ignoredWatchEvents > 0) {
+      ignoredWatchEvents -= 1;
+      return;
+    }
     console.error('[mcp-center] Config file changed, reloading...');
     try {
       const newConfig = loadConfig(configPath);
@@ -145,7 +150,13 @@ export function saveConfig(config, path) {
   if (!validateConfig(config)) {
     throw new Error('Invalid config object');
   }
-  
+
+  const dir = dirname(resolvedPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
   writeFileSync(resolvedPath, JSON.stringify(config, null, 2), 'utf-8');
+  ignoredWatchEvents += 1;
   currentConfig = config;
 }

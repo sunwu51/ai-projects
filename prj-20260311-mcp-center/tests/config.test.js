@@ -1,7 +1,7 @@
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { loadConfig, getConfig, getDefaultConfigPath } from '../src/config.js';
+import { loadConfig, getConfig, getDefaultConfigPath, saveConfig } from '../src/config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -89,6 +89,24 @@ describe('Config', () => {
     it('should return path ending with mcp.json', () => {
       const defaultPath = getDefaultConfigPath();
       expect(defaultPath).toContain('mcp.json');
+    });
+  });
+
+  describe('saveConfig', () => {
+    it('should create parent directory automatically when saving', () => {
+      const nestedConfigPath = resolve(__dirname, 'tmp-config-dir', 'nested', 'mcp.json');
+      const nestedDir = dirname(nestedConfigPath);
+
+      if (existsSync(resolve(__dirname, 'tmp-config-dir'))) {
+        rmSync(resolve(__dirname, 'tmp-config-dir'), { recursive: true, force: true });
+      }
+
+      saveConfig({ servers: [] }, nestedConfigPath);
+
+      expect(existsSync(nestedDir)).toBe(true);
+      expect(existsSync(nestedConfigPath)).toBe(true);
+
+      rmSync(resolve(__dirname, 'tmp-config-dir'), { recursive: true, force: true });
     });
   });
 });
